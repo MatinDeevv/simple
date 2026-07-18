@@ -22,6 +22,7 @@ jobs:
       - run: python pipeline/quantum_mps.py --self-check
       - run: python pipeline/quantum_kernel.py --self-check
       - run: python pipeline/quantum_reservoir.py --self-check
+      - run: python pipeline/stat_arb.py --self-check
 
   aer:
     runs-on: ubuntu-latest
