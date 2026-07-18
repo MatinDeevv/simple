@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 PIPELINE_DIR = Path(__file__).resolve().parents[1] / "pipeline"
@@ -17,6 +18,9 @@ FAST_CONFIG = stat_arb.ArenaConfig(
     warmup_steps=64,
     bootstrap_samples=32,
     bootstrap_block_sensitivity_minutes=(8, 16, 32),
+    basket_mode=stat_arb.RELATIVE_VALUE_MODE,
+    relative_value_currency_exposure_budget=0.35,
+    basket_neutral_zone_z=0.05,
     low_regime=stat_arb.RegimeParameters(32.0, 32.0, 8, 0.94, 0.50, 8, 2.0, 2),
     high_regime=stat_arb.RegimeParameters(16.0, 16.0, 4, 0.82, 0.75, 6, 1.35, 1),
 )
@@ -69,6 +73,43 @@ def test_factor_neutral_weights_are_currency_and_selected_factor_neutral() -> No
     assert np.isclose(np.sum(np.abs(weights)), 1.0)
 
 
+def test_cycle_and_relative_value_modes_have_distinct_currency_contracts() -> None:
+    transform, inverse, _labels = stat_arb.identity_free_transform()
+    signal = np.zeros(len(stat_arb.PAIRS))
+    signal[stat_arb.PAIRS.index("USDCNH")] = 1.0  # a bridge, not a closed cycle
+    loadings = np.zeros((len(stat_arb.PAIRS), 3))
+    incidence, _currencies = stat_arb.currency_incidence()
+    cycle = stat_arb.factor_neutral_weights(signal, transform, inverse, loadings, incidence, 0,
+                                             stat_arb.CYCLE_NEUTRAL_MODE)
+    relative = stat_arb.factor_neutral_weights(signal, transform, inverse, loadings, incidence, 0,
+                                                stat_arb.RELATIVE_VALUE_MODE, 0.25)
+    np.testing.assert_allclose(cycle, np.zeros(len(stat_arb.PAIRS)), atol=1e-12)
+    assert np.sum(np.abs(relative)) > 0.0
+    assert float(np.max(np.abs(incidence.T @ relative))) <= 0.25 + 1e-12
+
+
+def test_post_construction_probability_and_gate_reject_erased_signal() -> None:
+    parameters = stat_arb.RegimeParameters(16.0, 16.0, 4, 0.95, 0.5, 8, 2.0, 1)
+    features = {
+        "residual_level": np.asarray([2.0] + [0.0] * (len(stat_arb.PAIRS) - 1)),
+        "graph_pressure": np.zeros(len(stat_arb.PAIRS)),
+        "graph_cluster_size": np.ones(len(stat_arb.PAIRS)),
+        "beta": np.full(len(stat_arb.PAIRS), 0.5),
+        "half_life": np.full(len(stat_arb.PAIRS), 10.0),
+        "parameters": parameters,
+        "regime_high_probability": 0.2,
+    }
+    selection = stat_arb.selection_from_features(features)
+    config = stat_arb.ArenaConfig(maximum_basket_concentration=1.0)
+    retained = stat_arb.prediction_from_constructed_basket(
+        features, selection, np.asarray([0.5, -0.5] + [0.0] * 8), 0.0, 1.0, config)
+    erased = stat_arb.prediction_from_constructed_basket(
+        features, selection, np.zeros(len(stat_arb.PAIRS)), 1.0, 0.0, config)
+    assert retained["entry_eligible"]
+    assert not erased["entry_eligible"]
+    assert erased["probability"] < retained["probability"]
+
+
 def test_observed_minute_bootstrap_samples_sparse_entries_from_real_time_blocks() -> None:
     timeline_times = np.arange(40, dtype=np.int64) * stat_arb.DT_NS
     timeline_segments = np.zeros(len(timeline_times), dtype=np.int64)
@@ -102,6 +143,8 @@ def test_frozen_target_uses_entry_model_and_reports_path_diagnostics() -> None:
         horizon_steps=2,
         stop_multiple=2.0,
         raw_basket_weights=np.zeros(len(stat_arb.PAIRS)),
+        basket_one_step_volatility=1.0,
+        basket_neutral_zone_z=0.25,
     )
     outcome = stat_arb.evaluate_frozen_residual_target(times, log_prices, transform, entry)
     assert outcome is not None
@@ -111,7 +154,8 @@ def test_frozen_target_uses_entry_model_and_reports_path_diagnostics() -> None:
     assert outcome["percentage_displacement_removed"] > 0.0
     assert outcome["frozen_basket_cumulative_log_return"] == 0.0
     assert outcome["basket_directional_label"] == 0
-    assert outcome["basket_residual_convergence_disagreement"] == 1
+    assert np.isnan(outcome["basket_binary_label"])
+    assert np.isnan(outcome["basket_residual_convergence_disagreement"])
 
 
 def test_separate_regime_levels_do_not_jump_on_a_pure_regime_label_flip() -> None:
@@ -133,6 +177,91 @@ def test_separate_regime_levels_do_not_jump_on_a_pure_regime_label_flip() -> Non
         high_features["regime_probabilities"] @ high_features["residual_levels_by_regime"],
         atol=1e-12,
     )
+
+
+def test_regime_mixture_uses_full_innovation_once_and_decomposes_level_change() -> None:
+    parameters = stat_arb.RegimeParameters(16.0, 16.0, 99, 0.95, 0.5, 8, 2.0, 1)
+    config = stat_arb.ArenaConfig(low_regime=parameters, high_regime=parameters)
+    transform, _inverse, _labels = stat_arb.identity_free_transform()
+    state = stat_arb.CausalFactorState(config, transform)
+    state.steps = 1  # Preserve the deliberately zero factor bases below.
+    state.loadings_by_regime = [np.zeros((len(stat_arb.PAIRS), 3)), np.zeros((len(stat_arb.PAIRS), 3))]
+    state._update_regime_probability = lambda _raw: 0.0  # type: ignore[method-assign]
+    state.regime_high_probability = 0.5
+    raw_return = np.zeros(len(stat_arb.PAIRS))
+    raw_return[0] = 0.001
+    features, _ = state.update(raw_return)
+    # With zero initial state, each conditional level receives its full
+    # innovation, not half an innovation before the posterior blend.
+    np.testing.assert_allclose(features["residual_levels_by_regime"][0], features["residual_innovation"])
+    np.testing.assert_allclose(
+        features["residual_level_change"],
+        features["residual_level_decay_effect"] + features["residual_level_innovation_effect"]
+        + features["residual_level_posterior_reweighting_effect"],
+        atol=1e-12,
+    )
+
+
+def test_regime_posterior_reweighting_is_explicit_without_new_innovation() -> None:
+    parameters = stat_arb.RegimeParameters(16.0, 16.0, 99, 0.999, 0.5, 8, 2.0, 1)
+    config = stat_arb.ArenaConfig(low_regime=parameters, high_regime=parameters)
+    transform, _inverse, _labels = stat_arb.identity_free_transform()
+    state = stat_arb.CausalFactorState(config, transform)
+    state.steps = 1
+    state.loadings_by_regime = [np.zeros((len(stat_arb.PAIRS), 3)), np.zeros((len(stat_arb.PAIRS), 3))]
+    state.residual_levels = [np.full(len(stat_arb.PAIRS), 2.5), np.full(len(stat_arb.PAIRS), -0.8)]
+    state.previous_regime_probabilities = np.asarray([0.8, 0.2])
+    state.regime_high_probability = 0.8
+    state._update_regime_probability = lambda _raw: 0.0  # type: ignore[method-assign]
+    features, _ = state.update(np.zeros(len(stat_arb.PAIRS)))
+    # There is no raw innovation; the movement is almost entirely the declared
+    # posterior reweighting from low (+2.5) to high (-0.8), plus AR decay.
+    np.testing.assert_allclose(features["residual_level_innovation_effect"], 0.0, atol=1e-12)
+    assert float(features["residual_level_posterior_reweighting_effect"][0]) < -1.9
+    np.testing.assert_allclose(
+        features["residual_level_change"],
+        features["residual_level_decay_effect"] + features["residual_level_innovation_effect"]
+        + features["residual_level_posterior_reweighting_effect"],
+        atol=1e-12,
+    )
+
+
+def test_frozen_target_standardizes_and_excludes_neutral_returns() -> None:
+    times = np.arange(5, dtype=np.int64) * stat_arb.DT_NS
+    log_prices = np.zeros((5, len(stat_arb.PAIRS)))
+    log_prices[2:, 0] = 0.01
+    log_prices[3:, 0] = 0.02
+    transform, _inverse, _labels = stat_arb.identity_free_transform()
+    entry = stat_arb.FrozenResidualTarget(
+        source_index=1,
+        segment_id=0,
+        selected=0,
+        entry_level=1.0,
+        entry_levels_by_regime=np.zeros((2, len(stat_arb.PAIRS))),
+        regime_probabilities=np.asarray([0.5, 0.5]),
+        means_by_regime=np.zeros((2, len(stat_arb.PAIRS))),
+        loadings_by_regime=np.zeros((2, len(stat_arb.PAIRS), 3)),
+        residual_scales_by_regime=np.ones((2, len(stat_arb.PAIRS))),
+        level_ars=np.asarray([0.9, 0.9]),
+        horizon_steps=2,
+        stop_multiple=2.0,
+        raw_basket_weights=np.eye(1, len(stat_arb.PAIRS), 0).ravel(),
+        basket_one_step_volatility=0.01,
+        basket_neutral_zone_z=0.25,
+    )
+    outcome = stat_arb.evaluate_frozen_residual_target(times, log_prices, transform, entry)
+    assert outcome is not None
+    assert outcome["basket_standardized_return"] == pytest.approx(2.0 ** -0.5 * 2.0)
+    assert outcome["basket_outcome_class"] == 1
+    assert outcome["basket_binary_label"] == 1.0
+
+    negative_prices = np.zeros_like(log_prices)
+    negative_prices[2:, 0] = -0.01
+    negative_prices[3:, 0] = -0.02
+    negative = stat_arb.evaluate_frozen_residual_target(times, negative_prices, transform, entry)
+    assert negative is not None
+    assert negative["basket_outcome_class"] == -1
+    assert negative["basket_binary_label"] == 0.0
 
 
 def test_causal_emissions_ignore_future_price_mutations() -> None:
@@ -157,10 +286,10 @@ def test_arena_uses_frozen_level_targets_and_never_promotes_bid_only_data() -> N
     assert labelled["gross_convergence"].notna().all()
     assert labelled["target_path_volatility"].notna().all()
     assert labelled["basket_directional_label"].notna().all()
-    assert labelled["basket_residual_convergence_disagreement"].isin([0, 1]).all()
+    assert labelled["basket_residual_convergence_disagreement"].dropna().isin([0, 1]).all()
     assert labelled["projection_distortion_l2"].notna().all()
     currency_exposures = result.emissions.filter(regex=r"^currency_incidence_exposure_").to_numpy(dtype=float)
-    assert float(np.nanmax(np.abs(currency_exposures))) < 1e-8
+    assert float(np.nanmax(np.abs(currency_exposures))) <= FAST_CONFIG.relative_value_currency_exposure_budget + 1e-8
     selected_factor_exposures = result.emissions.filter(regex=r"^selected_factor_exposure_").to_numpy(dtype=float)
     assert float(np.nanmax(np.abs(selected_factor_exposures))) < 1e-8
     assert set(result.emissions["active_regime"]) == {"low", "high"}

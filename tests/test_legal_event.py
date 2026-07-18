@@ -52,6 +52,37 @@ def test_abnormal_return_uses_scaled_pre_event_expected_return() -> None:
     assert row["baseline_adjusted_abnormal_log_return"] == pytest.approx(0.02)
 
 
+def test_assessment_provenance_is_hashed_sealed_and_append_only() -> None:
+    schema = legal_event.load_schema()
+    event = legal_event.synthetic_events()[0]
+    validated = legal_event.validate_events([event], schema)[0]
+    assert validated["assessment_sha256"] == legal_event.canonical_assessment_hash(validated)
+
+    hindsight = legal_event.synthetic_events()[0]
+    hindsight["sealed_before_market_data_through"] = "1970-01-01T00:04:00Z"
+    hindsight["assessment_sha256"] = legal_event.canonical_assessment_hash(hindsight)
+    with pytest.raises(legal_event.ContractError, match="future market data"):
+        legal_event.validate_events([hindsight], schema)
+
+    tampered = legal_event.synthetic_events()[0]
+    tampered["pair_exposures"]["EURUSD"] = 0.1
+    with pytest.raises(legal_event.ContractError, match="immutable assessment content"):
+        legal_event.validate_events([tampered], schema)
+
+    parent = legal_event.synthetic_events()[0]
+    child = copy.deepcopy(parent)
+    child["event_id"] = "synthetic-rule-002"
+    child["source_document_id"] = "synthetic-primary-002"
+    child["published_at"] = "1970-01-01T00:04:00Z"
+    child["known_at"] = "1970-01-01T00:04:00Z"
+    child["assessment_created_at"] = "1970-01-01T00:04:00Z"
+    child["sealed_before_market_data_through"] = "1970-01-01T00:04:00Z"
+    child["parent_assessment_sha256"] = parent["assessment_sha256"]
+    child["assessment_sha256"] = legal_event.canonical_assessment_hash(child)
+    ledger = legal_event.validate_events([parent, child], schema)
+    assert ledger[1]["parent_assessment_sha256"] == parent["assessment_sha256"]
+
+
 def test_future_citation_and_conflicting_duplicate_are_rejected() -> None:
     schema = legal_event.load_schema()
     first = legal_event.synthetic_events()[0]
@@ -67,6 +98,7 @@ def test_future_citation_and_conflicting_duplicate_are_rejected() -> None:
     duplicate = legal_event.synthetic_events()[0]
     conflict = copy.deepcopy(duplicate)
     conflict["pair_exposures"]["EURUSD"] = -0.8
+    conflict["assessment_sha256"] = legal_event.canonical_assessment_hash(conflict)
     with pytest.raises(legal_event.ContractError, match="conflicting duplicate"):
         legal_event.validate_events([duplicate, conflict], schema)
 

@@ -38,6 +38,8 @@ N_PAIRS = len(PAIRS)
 DT_NS = 60_000_000_000
 VERSION = "stat-arb-arena-0.2.0-frozen"
 OUTER_TEST_YEARS = (2022, 2023, 2024)
+CYCLE_NEUTRAL_MODE = "cycle_neutral"
+RELATIVE_VALUE_MODE = "relative_value"
 
 
 class ContractError(RuntimeError):
@@ -97,6 +99,14 @@ class ArenaConfig:
     # rows.  The bootstrap samples raw time ranges and includes their entries.
     bootstrap_block_sensitivity_minutes: tuple[int, ...] = (30, 240, 1_440)
     bootstrap_seed: int = 20260718
+    # Cycle-neutral research is deliberately restricted to closed FX loops.
+    # Relative-value mode keeps factor neutrality but caps, rather than erases,
+    # currency incidence in pair-coefficient units.
+    basket_mode: str = CYCLE_NEUTRAL_MODE
+    relative_value_currency_exposure_budget: float = 0.35
+    minimum_signal_preservation: float = 0.35
+    maximum_basket_concentration: float = 0.75
+    basket_neutral_zone_z: float = 0.25
     low_regime: RegimeParameters = field(default_factory=_low_regime)
     high_regime: RegimeParameters = field(default_factory=_high_regime)
 
@@ -129,6 +139,8 @@ class FrozenResidualTarget:
     horizon_steps: int
     stop_multiple: float
     raw_basket_weights: np.ndarray
+    basket_one_step_volatility: float
+    basket_neutral_zone_z: float
 
 
 def epoch_ns(values: object) -> np.ndarray:
@@ -231,14 +243,19 @@ def currency_incidence(pairs: tuple[str, ...] = PAIRS) -> tuple[np.ndarray, tupl
 def factor_neutral_weights(signal_basis: np.ndarray, transform: np.ndarray,
                            inverse_transform: np.ndarray, loadings_basis: np.ndarray,
                            currency_matrix: np.ndarray | None = None,
-                           neutral_factor_count: int = 2) -> np.ndarray:
-    """Construct a currency- and selected-factor-neutral diagnostic basket.
+                           neutral_factor_count: int = 2,
+                           basket_mode: str = CYCLE_NEUTRAL_MODE,
+                           relative_value_currency_exposure_budget: float = 0.35) -> np.ndarray:
+    """Construct either a closed-cycle or currency-budgeted diagnostic basket.
 
     ``T.T`` maps the residual signal correctly as a dual vector.  In contrast,
     factor loading columns represent primal directions, so their raw mapping is
-    ``inverse(T) @ B``.  The D constraint is ``D.T @ w = 0`` in pair-coefficient
-    units; without contract notionals and conversion prices it is explicitly
-    not a dollar-risk or execution-neutrality claim.
+    ``inverse(T) @ B``.  ``cycle_neutral`` imposes ``D.T @ w = 0`` and is
+    intentionally limited to the three-dimensional closed-loop space.  In
+    ``relative_value`` mode only factor directions are projected out; the
+    resulting basket is proportionally scaled to a predeclared
+    ``max(abs(D.T @ w))`` budget.  Both remain pair-coefficient diagnostics,
+    never dollar-risk or execution-neutrality claims.
     """
     signal = np.asarray(signal_basis, dtype=np.float64)
     loadings = np.asarray(loadings_basis, dtype=np.float64)
@@ -248,19 +265,31 @@ def factor_neutral_weights(signal_basis: np.ndarray, transform: np.ndarray,
         raise ContractError("invalid factor basis for diagnostic weights")
     if not 0 <= neutral_factor_count <= loadings.shape[1]:
         raise ContractError("neutral_factor_count is outside the factor basis")
+    if basket_mode not in (CYCLE_NEUTRAL_MODE, RELATIVE_VALUE_MODE):
+        raise ContractError("basket_mode must be cycle_neutral or relative_value")
+    if not 0.0 < relative_value_currency_exposure_budget <= 1.0:
+        raise ContractError("relative-value currency exposure budget must be in (0, 1]")
     incidence = currency_incidence()[0] if currency_matrix is None else np.asarray(currency_matrix, dtype=np.float64)
     if incidence.shape[0] != N_PAIRS:
         raise ContractError("currency incidence does not match pair weights")
     raw_signal = basis_signal_to_raw_weights(signal, transform)
     raw_factor_directions = inverse_transform @ loadings
     selected_factors = raw_factor_directions[:, :neutral_factor_count]
-    constraints = np.column_stack((incidence, selected_factors))
+    constraints = (np.column_stack((incidence, selected_factors))
+                   if basket_mode == CYCLE_NEUTRAL_MODE else selected_factors)
     if np.linalg.matrix_rank(constraints, tol=1.0e-12) >= N_PAIRS:
         return np.zeros(N_PAIRS, dtype=np.float64)
     projection = constraints @ (np.linalg.pinv(constraints, rcond=1.0e-12) @ raw_signal)
     weights = raw_signal - projection
     scale = float(np.sum(np.abs(weights)))
-    return weights / scale if scale > 1.0e-12 else np.zeros_like(weights)
+    if scale <= 1.0e-12:
+        return np.zeros_like(weights)
+    weights = weights / scale
+    if basket_mode == RELATIVE_VALUE_MODE:
+        currency_peak = float(np.max(np.abs(incidence.T @ weights)))
+        if currency_peak > relative_value_currency_exposure_budget:
+            weights *= relative_value_currency_exposure_budget / currency_peak
+    return weights
 
 
 def basket_projection_diagnostics(signal_basis: np.ndarray, transform: np.ndarray,
@@ -411,6 +440,7 @@ class CausalFactorState:
         # system.  A blended level is emitted separately; no branch ever
         # receives innovations from the other regime definition.
         self.residual_levels = [np.zeros(N_PAIRS, dtype=np.float64) for _ in range(2)]
+        self.previous_regime_probabilities = np.asarray([0.5, 0.5], dtype=np.float64)
         self.log_vol_mean = 0.0
         self.log_vol_variance = 1.0
         self.regime_high_probability = 0.5
@@ -482,6 +512,7 @@ class CausalFactorState:
         factors_by_regime: list[np.ndarray] = []
         residual_scales: list[np.ndarray] = []
         residual_innovations: list[np.ndarray] = []
+        prior_levels_by_regime = np.stack(self.residual_levels).copy()
         for regime, parameters in enumerate(self.parameters):
             alpha_covariance = _alpha(parameters.covariance_half_life_steps) * posterior[regime]
             delta = transformed_return - self.means[regime]
@@ -508,10 +539,11 @@ class CausalFactorState:
             factors_by_regime.append(factors)
             scale = np.sqrt(np.maximum(self.residual_variances[regime], 1.0e-16))
             innovation = residual / scale
-            # Posterior-weighted innovations let an inactive regime decay in
-            # its own coordinate system without injecting active-regime state.
+            # Conditional-state mixture: each regime gets its full innovation
+            # in its own coordinate system.  Posterior weights are applied once
+            # only when the regime states are blended below.
             self.residual_levels[regime] = (parameters.level_ar * self.residual_levels[regime]
-                                            + posterior[regime] * innovation)
+                                            + innovation)
             residual_scales.append(scale)
             residual_innovations.append(innovation)
         active_regime = int(self.regime_high_probability >= 0.5)
@@ -522,6 +554,17 @@ class CausalFactorState:
         regime_probabilities = np.asarray(posterior, dtype=np.float64)
         levels_by_regime = np.stack(self.residual_levels)
         blended_residual_level = regime_probabilities @ levels_by_regime
+        decay_levels = np.stack([
+            self.parameters[regime].level_ar * prior_levels_by_regime[regime]
+            for regime in range(2)
+        ])
+        residual_level_decay_effect = regime_probabilities @ (decay_levels - prior_levels_by_regime)
+        residual_level_innovation_effect = regime_probabilities @ np.stack(residual_innovations)
+        residual_level_posterior_reweighting_effect = (
+            regime_probabilities - self.previous_regime_probabilities) @ prior_levels_by_regime
+        prior_blended_residual_level = self.previous_regime_probabilities @ prior_levels_by_regime
+        residual_level_change = blended_residual_level - prior_blended_residual_level
+        self.previous_regime_probabilities = regime_probabilities.copy()
         beta = np.clip(self.ar_numerators[active_regime] / np.maximum(self.ar_denominators[active_regime], 1.0e-16),
                        -0.9999, 0.9999)
         half_life = np.full(N_PAIRS, np.inf, dtype=np.float64)
@@ -535,6 +578,10 @@ class CausalFactorState:
             "residual_level": blended_residual_level.copy(),
             "residual_levels_by_regime": levels_by_regime.copy(),
             "regime_probabilities": regime_probabilities.copy(),
+            "residual_level_change": residual_level_change.copy(),
+            "residual_level_decay_effect": residual_level_decay_effect.copy(),
+            "residual_level_innovation_effect": residual_level_innovation_effect.copy(),
+            "residual_level_posterior_reweighting_effect": residual_level_posterior_reweighting_effect.copy(),
             "beta": beta,
             "half_life": half_life,
             "factors": factors_by_regime[active_regime],
@@ -546,6 +593,7 @@ class CausalFactorState:
             "active_regime_index": active_regime,
             "parameters": parameters,
             "means_by_regime": np.stack(self.means).copy(),
+            "covariances_by_regime": np.stack(self.covariances).copy(),
             "loadings": self.loadings_by_regime[active_regime].copy(),
             "loadings_by_regime": np.stack(self.loadings_by_regime).copy(),
             "residual_scales_by_regime": np.stack(residual_scales).copy(),
@@ -554,8 +602,8 @@ class CausalFactorState:
         }, edges
 
 
-def prediction_from_features(features: dict[str, Any]) -> dict[str, Any]:
-    """Predeclared regime/graph-aware residual-level forecast and entry contract."""
+def selection_from_features(features: dict[str, Any]) -> dict[str, Any]:
+    """Select a residual signal before, but do not score before, basket construction."""
     level = np.asarray(features["residual_level"], dtype=np.float64)
     pressure = np.asarray(features["graph_pressure"], dtype=np.float64)
     cluster_size = np.asarray(features["graph_cluster_size"], dtype=np.float64)
@@ -565,30 +613,74 @@ def prediction_from_features(features: dict[str, Any]) -> dict[str, Any]:
     selected_level = float(level[selected])
     selected_pressure = float(pressure[selected])
     selected_cluster = int(cluster_size[selected])
-    entry_eligible = bool(abs(selected_level) >= parameters.entry_abs_level)
+    residual_entry_eligible = bool(abs(selected_level) >= parameters.entry_abs_level)
     beta = np.asarray(features["beta"], dtype=np.float64)
     unstable = float(np.mean((beta <= 0.0) | (beta >= 0.995)))
-    breakdown = sigmoid(-2.10 + 1.20 * float(features["regime_high_probability"])
-                        + 0.30 * min(abs(selected_level), 8.0) + 1.00 * selected_pressure
-                        + 0.15 * max(selected_cluster - 1, 0) + 1.50 * unstable)
+    baseline_breakdown_logit = (-2.10 + 1.20 * float(features["regime_high_probability"])
+                                + 0.30 * min(abs(selected_level), 8.0) + 1.00 * selected_pressure
+                                + 0.15 * max(selected_cluster - 1, 0) + 1.50 * unstable)
     half_life = float(np.asarray(features["half_life"])[selected])
     speed = math.log1p(parameters.holding_horizon_steps / half_life) if math.isfinite(half_life) and half_life > 0 else 0.0
-    probability = sigmoid(-0.40 + 0.28 * min(abs(selected_level), 8.0) + 0.25 * speed
-                          - 2.25 * breakdown - 0.65 * float(features["regime_high_probability"]))
     signal_basis = np.zeros(N_PAIRS, dtype=np.float64)
     signal_basis[selected] = -float(np.sign(selected_level) or 1.0)
     scale = max(0.0, min(1.0, (abs(selected_level) - parameters.entry_abs_level) /
                          max(parameters.stop_multiple * parameters.entry_abs_level, 1.0e-12)))
     return {
         "selected": selected,
-        "probability": probability,
-        "breakdown": breakdown,
         "signal_basis": signal_basis,
-        "entry_eligible": entry_eligible,
-        "position_scale": scale * (1.0 - breakdown) if entry_eligible else 0.0,
+        "residual_entry_eligible": residual_entry_eligible,
+        "base_position_scale": scale,
+        "baseline_breakdown_logit": baseline_breakdown_logit,
+        "speed": speed,
         "selected_level": selected_level,
         "selected_graph_pressure": selected_pressure,
         "selected_cluster_size": selected_cluster,
+    }
+
+
+def basket_concentration(weights: np.ndarray) -> float:
+    """L1-share Herfindahl concentration; one means a single-pair basket."""
+    gross = float(np.sum(np.abs(weights)))
+    if gross <= 1.0e-12:
+        return 1.0
+    shares = np.abs(weights) / gross
+    return float(np.sum(shares * shares))
+
+
+def prediction_from_constructed_basket(features: dict[str, Any], selection: dict[str, Any],
+                                       unit_weights: np.ndarray, projection_distortion_l2: float,
+                                       signal_preserved_fraction: float,
+                                       config: ArenaConfig) -> dict[str, Any]:
+    """Score and gate the actual constrained basket, not the pre-projection signal."""
+    gross_exposure = float(np.sum(np.abs(unit_weights)))
+    concentration = basket_concentration(unit_weights)
+    expected_tracking = signal_preserved_fraction
+    breakdown = sigmoid(float(selection["baseline_breakdown_logit"])
+                        + 1.10 * projection_distortion_l2
+                        + 0.75 * max(concentration - 0.10, 0.0)
+                        + 1.25 * max(config.minimum_signal_preservation - signal_preserved_fraction, 0.0))
+    probability = sigmoid(-0.40 + 0.28 * min(abs(float(selection["selected_level"])), 8.0)
+                          + 0.25 * float(selection["speed"]) - 2.25 * breakdown
+                          - 0.65 * float(features["regime_high_probability"])
+                          + 1.10 * signal_preserved_fraction
+                          - 0.65 * projection_distortion_l2
+                          - 0.45 * max(concentration - 0.10, 0.0))
+    entry_eligible = bool(
+        selection["residual_entry_eligible"]
+        and signal_preserved_fraction >= config.minimum_signal_preservation
+        and concentration <= config.maximum_basket_concentration
+        and gross_exposure > 1.0e-12
+    )
+    return {
+        **selection,
+        "probability": probability,
+        "breakdown": breakdown,
+        "entry_eligible": entry_eligible,
+        "position_scale": (float(selection["base_position_scale"]) * (1.0 - breakdown)
+                           if entry_eligible else 0.0),
+        "basket_concentration": concentration,
+        "expected_basket_residual_tracking": expected_tracking,
+        "basket_gross_exposure_l1_unit": gross_exposure,
     }
 
 
@@ -620,7 +712,7 @@ def evaluate_frozen_residual_target(times: np.ndarray, log_prices: np.ndarray, t
             innovations[regime] = residual[entry.selected] / max(
                 entry.residual_scales_by_regime[regime, entry.selected], 1.0e-12)
             levels_by_regime[regime] = (entry.level_ars[regime] * levels_by_regime[regime]
-                                        + entry.regime_probabilities[regime] * innovations[regime])
+                                        + innovations[regime])
         levels.append(float((entry.regime_probabilities @ levels_by_regime)[entry.selected]))
         residual_innovations.append(float(entry.regime_probabilities @ innovations))
         selected_residual_returns.append(float(entry.regime_probabilities @ residual_values))
@@ -633,7 +725,17 @@ def evaluate_frozen_residual_target(times: np.ndarray, log_prices: np.ndarray, t
     breakdown = bool(np.max(np.abs(path)) > entry.stop_multiple * abs(entry.entry_level))
     basket_path = np.cumsum(np.asarray(basket_returns, dtype=np.float64))
     basket_gross = float(basket_path[-1])
-    basket_directional_hit = int(basket_gross > 0.0)
+    basket_standardized_return = basket_gross / max(
+        entry.basket_one_step_volatility * math.sqrt(entry.horizon_steps), 1.0e-12)
+    if basket_standardized_return > entry.basket_neutral_zone_z:
+        basket_outcome_class = 1
+        basket_binary_label: float = 1.0
+    elif basket_standardized_return < -entry.basket_neutral_zone_z:
+        basket_outcome_class = -1
+        basket_binary_label = 0.0
+    else:
+        basket_outcome_class = 0
+        basket_binary_label = float("nan")
     residual_label = int(gross_convergence > 0.0 and abs(float(path[-1])) < abs(entry.entry_level))
     if len(basket_returns) < 2 or np.std(basket_returns) <= 1.0e-16 or np.std(selected_residual_returns) <= 1.0e-16:
         tracking_correlation = float("nan")
@@ -651,10 +753,15 @@ def evaluate_frozen_residual_target(times: np.ndarray, log_prices: np.ndarray, t
         "breakdown_label": int(breakdown),
         "target_path_volatility": float(np.std(residual_innovations, ddof=0)),
         "frozen_target_level": float(path[-1]),
-        "basket_directional_label": basket_directional_hit,
+        "basket_standardized_return": basket_standardized_return,
+        "basket_neutral_zone_z": entry.basket_neutral_zone_z,
+        "basket_outcome_class": basket_outcome_class,
+        "basket_binary_label": basket_binary_label,
+        "basket_directional_label": basket_outcome_class,
         "basket_tracking_correlation": tracking_correlation,
         "basket_max_adverse_excursion": float(max(0.0, -np.min(basket_path))),
-        "basket_residual_convergence_disagreement": int(basket_directional_hit != residual_label),
+        "basket_residual_convergence_disagreement": (
+            int(int(basket_binary_label) != residual_label) if math.isfinite(basket_binary_label) else float("nan")),
         "basket_cumulative_gross_log_return": basket_gross,
         "frozen_basket_cumulative_log_return": basket_gross,
         "frozen_basket_path_volatility": float(np.std(basket_returns, ddof=0)),
@@ -705,6 +812,14 @@ def frozen_conditional_climatology(train: pd.DataFrame, target: pd.DataFrame, la
 def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
                config: ArenaConfig = ArenaConfig()) -> ArenaResult:
     """Run the frozen v0.2 arena over supplied synchronous log-close observations."""
+    if config.basket_mode not in (CYCLE_NEUTRAL_MODE, RELATIVE_VALUE_MODE):
+        raise ContractError("basket_mode must be cycle_neutral or relative_value")
+    if not 0.0 < config.minimum_signal_preservation <= 1.0:
+        raise ContractError("minimum_signal_preservation must be in (0, 1]")
+    if not 0.10 <= config.maximum_basket_concentration <= 1.0:
+        raise ContractError("maximum_basket_concentration must be in [0.10, 1]")
+    if not 0.0 < config.basket_neutral_zone_z < 5.0:
+        raise ContractError("basket_neutral_zone_z must be in (0, 5)")
     if times.ndim != 1 or log_prices.shape != (len(times), N_PAIRS):
         raise ContractError("times/log_prices do not match the ten-pair arena contract")
     if len(times) <= config.warmup_steps + config.max_horizon_steps + 2:
@@ -744,22 +859,30 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             })
         if state.steps < config.warmup_steps:
             continue
-        decision = prediction_from_features(features)
+        selection = selection_from_features(features)
         parameters: RegimeParameters = features["parameters"]
         unit_weights = factor_neutral_weights(
-            decision["signal_basis"], transform, inverse_transform, features["loadings"], incidence,
-            parameters.neutral_factor_count,
+            selection["signal_basis"], transform, inverse_transform, features["loadings"], incidence,
+            parameters.neutral_factor_count, config.basket_mode,
+            config.relative_value_currency_exposure_budget,
         )
-        weights = unit_weights * float(decision["position_scale"])
         projection_distortion_l2, signal_preserved_fraction = basket_projection_diagnostics(
-            decision["signal_basis"], transform, unit_weights)
+            selection["signal_basis"], transform, unit_weights)
+        decision = prediction_from_constructed_basket(
+            features, selection, unit_weights, projection_distortion_l2, signal_preserved_fraction, config)
+        weights = unit_weights * float(decision["position_scale"])
         turnover = float(np.sum(np.abs(weights - state.previous_weights)))
         state.previous_weights = weights
         raw_factor_directions = inverse_transform @ np.asarray(features["loadings"])
         factor_exposure = raw_factor_directions[:, :parameters.neutral_factor_count].T @ weights
         currency_exposure = incidence.T @ weights
         selected = int(decision["selected"])
-        entry_eligible = bool(decision["entry_eligible"] and np.sum(np.abs(unit_weights)) > 0.0)
+        entry_eligible = bool(decision["entry_eligible"])
+        raw_covariance = np.zeros((N_PAIRS, N_PAIRS), dtype=np.float64)
+        for probability, covariance_basis in zip(features["regime_probabilities"],
+                                                  features["covariances_by_regime"], strict=True):
+            raw_covariance += float(probability) * (inverse_transform @ covariance_basis @ inverse_transform.T)
+        basket_one_step_volatility = float(np.sqrt(max(weights @ raw_covariance @ weights, 1.0e-16)))
         record: dict[str, Any] = {
             "source_index": index,
             "timestamp": pd.Timestamp(int(times[index]), unit="ns", tz="UTC"),
@@ -767,10 +890,13 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             "selected_component_index": selected,
             "selected_component": component_names[selected],
             "active_regime": features["active_regime"],
+            "basket_mode": config.basket_mode,
+            "relative_value_currency_exposure_budget": config.relative_value_currency_exposure_budget,
             "high_volatility_regime_probability": float(features["regime_high_probability"]),
             "session_bucket": int(pd.Timestamp(int(times[index]), unit="ns", tz="UTC").hour // 6),
             "p_basket_directional": float(decision["probability"]),
             "breakdown_probability": float(decision["breakdown"]),
+            "residual_entry_eligible": bool(selection["residual_entry_eligible"]),
             "entry_eligible": entry_eligible,
             "entry_residual_level": float(decision["selected_level"]),
             "entry_abs_level_threshold": parameters.entry_abs_level,
@@ -781,14 +907,25 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             "diagnostic_gross_exposure_l1": float(np.sum(np.abs(weights))),
             "projection_distortion_l2": projection_distortion_l2,
             "signal_preserved_fraction": signal_preserved_fraction,
+            "expected_basket_residual_tracking": float(decision["expected_basket_residual_tracking"]),
+            "basket_concentration": float(decision["basket_concentration"]),
+            "basket_one_step_volatility": basket_one_step_volatility,
+            "basket_neutral_zone_z": config.basket_neutral_zone_z,
             "turnover_l1_diagnostic": turnover,
             "selected_graph_pressure": float(decision["selected_graph_pressure"]),
             "selected_graph_cluster_size": int(decision["selected_cluster_size"]),
             "factor_volatility": float(features["factor_volatility"]),
             "residual_volatility": float(features["residual_volatility"]),
             "volatility_z": float(features["volatility_z"]),
+            "selected_level_change": float(features["residual_level_change"][selected]),
+            "selected_level_decay_effect": float(features["residual_level_decay_effect"][selected]),
+            "selected_level_innovation_effect": float(features["residual_level_innovation_effect"][selected]),
+            "selected_level_posterior_reweighting_effect": float(features["residual_level_posterior_reweighting_effect"][selected]),
             "target_time": pd.NaT,
             "convergence_label": np.nan,
+            "basket_standardized_return": np.nan,
+            "basket_outcome_class": np.nan,
+            "basket_binary_label": np.nan,
             "basket_directional_label": np.nan,
             "basket_tracking_correlation": np.nan,
             "basket_max_adverse_excursion": np.nan,
@@ -827,6 +964,8 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             horizon_steps=parameters.holding_horizon_steps,
             stop_multiple=parameters.stop_multiple,
             raw_basket_weights=weights.copy(),
+            basket_one_step_volatility=basket_one_step_volatility,
+            basket_neutral_zone_z=config.basket_neutral_zone_z,
         ) if entry_eligible else None)
     if not records:
         raise ContractError("no causal feature emissions were produced")
@@ -837,17 +976,17 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
         if outcome is not None:
             record.update(outcome)
     emissions = pd.DataFrame(records)
-    labelled = emissions[emissions["basket_directional_label"].notna()].copy()
-    labelled["basket_directional_label"] = labelled["basket_directional_label"].astype(np.int8)
+    labelled = emissions[emissions["basket_binary_label"].notna()].copy()
+    labelled["basket_binary_label"] = labelled["basket_binary_label"].astype(np.int8)
     train = labelled[labelled["source_index"] + labelled["holding_horizon_steps"] < test_start_index].copy()
     oos = labelled[labelled["source_index"] >= test_start_index].copy()
     if len(train) < 100 or len(oos) < 100:
         raise ContractError("train/OOS target partitions require at least 100 valid frozen entries each")
-    frozen_train_prior = float(train["basket_directional_label"].mean())
+    frozen_train_prior = float(train["basket_binary_label"].mean())
     conditional_probability, conditional_tiers = frozen_conditional_climatology(
-        train, oos, "basket_directional_label")
+        train, oos, "basket_binary_label")
     oos_probability = oos["p_basket_directional"].to_numpy(dtype=np.float64)
-    oos_label = oos["basket_directional_label"].to_numpy(dtype=np.float64)
+    oos_label = oos["basket_binary_label"].to_numpy(dtype=np.float64)
     prior_probability = np.full(len(oos), frozen_train_prior, dtype=np.float64)
     emissions["p_conditional_climatology"] = np.nan
     emissions["conditional_climatology_tier"] = pd.NA
@@ -875,7 +1014,9 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
         "interpretation": "causal classical residual-level research only; no execution, PnL, capacity, or market-impact claim",
         "pair_scope": list(PAIRS),
         "target_contract": {
-            "primary_target": "fixed frozen basket has positive cumulative gross log return over the entry-specific holding horizon",
+            "primary_target": "frozen basket standardized gross return is positive beyond the frozen neutral zone; negative beyond it is the binary loss and in-zone outcomes are excluded from binary calibration",
+            "basket_standardized_return": "sum(w_entry * raw_log_return) / (frozen_one_step_basket_volatility * sqrt(horizon))",
+            "basket_neutral_zone_z": config.basket_neutral_zone_z,
             "residual_explanatory_target": "frozen selected residual level converges after its frozen entry-specific holding horizon",
             "gross_convergence": "-sign(S_t) * (S_{t+h,frozen} - S_t)",
             "residual_level": "S_t = p_low S_t_low + p_high S_t_high; each branch updates only in its own frozen coordinate system",
@@ -895,8 +1036,10 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
         "components": {
             "regime_switching": "posterior-weighted low/high covariance, loadings, residual variance, AR state, refresh cadence, thresholds, holding horizon, stop, factor-neutrality count, and diagnostic position sizing",
             "sparse_interaction_graph": "shrunken precision partial-correlation graph changes residual selection score, breakdown probability, and diagnostic position scale",
-            "neutrality": "raw signal T.T @ s; raw factor directions inverse(T) @ B; D.T @ w=0 currency-incidence and selected-factor constraints",
-            "currency_units_caveat": "incidence neutrality is in pair coefficient units only; no dollar-risk sizing without contract notionals and conversion prices",
+            "basket_construction": ("cycle_neutral: D.T @ w=0 closed-loop research" if config.basket_mode == CYCLE_NEUTRAL_MODE
+                                    else "relative_value: selected factor neutrality plus bounded max(abs(D.T @ w)) in pair-coefficient units"),
+            "post_construction_gate": "probability and entry use signal preservation, projection distortion, expected basket/residual tracking, concentration, and nonzero gross exposure",
+            "currency_units_caveat": "incidence neutrality/budgets are pair coefficient units only; no dollar-risk sizing without contract notionals and conversion prices",
             "execution_cost_status": "BLOCKED: BID-only source has no spread, fill, impact, borrow, capacity, or latency inputs",
         },
         "window": {
@@ -910,6 +1053,7 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             "train_samples": int(len(train)),
             "oos_samples": int(len(oos)),
             "model": {"brier_score": brier_score(oos_probability, oos_label), "log_loss": log_loss(oos_probability, oos_label), "calibration_error": calibration_error(oos_probability, oos_label)},
+            "basket_standardized_return": {"mean": float(labelled["basket_standardized_return"].mean()), "neutral_outcomes_excluded": int((emissions["basket_outcome_class"] == 0).sum())},
             "frozen_train_prior": {"probability": frozen_train_prior, "brier_score": brier_score(prior_probability, oos_label), "log_loss": log_loss(prior_probability, oos_label), "calibration_error": calibration_error(prior_probability, oos_label)},
             "frozen_conditional_climatology": {"brier_score": brier_score(conditional_probability, oos_label), "log_loss": log_loss(conditional_probability, oos_label), "calibration_error": calibration_error(conditional_probability, oos_label), "tier_counts": {str(key): int(value) for key, value in tier_counts.items()}},
             "time_shuffled_residual_placebo": {"model_brier_score": brier_score(oos_probability, shuffled_labels), "conditional_climatology_brier_score": brier_score(conditional_probability, shuffled_labels), "seed": config.bootstrap_seed},
@@ -996,6 +1140,9 @@ def _fast_config() -> ArenaConfig:
         warmup_steps=64,
         bootstrap_samples=32,
         bootstrap_block_sensitivity_minutes=(8, 16, 32),
+        basket_mode=RELATIVE_VALUE_MODE,
+        relative_value_currency_exposure_budget=0.35,
+        basket_neutral_zone_z=0.05,
         low_regime=RegimeParameters(32.0, 32.0, 8, 0.94, 0.50, 8, 2.0, 2),
         high_regime=RegimeParameters(16.0, 16.0, 4, 0.82, 0.75, 6, 1.35, 1),
     )
@@ -1031,6 +1178,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--test-year", type=int, choices=OUTER_TEST_YEARS)
     parser.add_argument("--out-dir", type=Path, default=DERIVED_DIR)
     parser.add_argument("--self-check", action="store_true")
+    parser.add_argument("--basket-mode", choices=(CYCLE_NEUTRAL_MODE, RELATIVE_VALUE_MODE),
+                        default=CYCLE_NEUTRAL_MODE,
+                        help="diagnostic basket contract; cycle_neutral is the frozen default")
     parser.add_argument("--allow-burned-holdout-research", action="store_true", help="explicitly acknowledge that all available canonical data end in the burned 2024 holdout")
     args = parser.parse_args(argv)
     if args.self_check:
@@ -1042,7 +1192,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         times, prices, test_start = load_common_log_prices(args.max_rows, args.test_year)
-        result = run_arrays(times, prices, test_start)
+        result = run_arrays(times, prices, test_start, ArenaConfig(basket_mode=args.basket_mode))
         label = f"outer_{args.test_year}" if args.test_year is not None else "bounded_latest"
         outputs = write_result(result, args.out_dir.resolve(), label)
         result.summary["artifact_paths"] = outputs

@@ -24,6 +24,13 @@ scenario_probabilities, pair_exposures
 used the source. It is not a publication-date guess. Scenario probabilities and
 pair exposures are recorded inputs, not outputs fitted to later returns.
 
+Each recorded assessment has an immutable hash, author, model version, creation
+time, optional parent-assessment hash, and a seal declaring the latest market
+timestamp it could have consumed. The validator rejects altered assessment
+content, duplicate hashes, forward parent links, and seals that permit market
+data later than the assessment itself. This establishes provenance, not a claim
+that the scenario inputs are correct.
+
 Every scenario in the fixed ledger is supplied, probabilities sum to one, pair
 exposures are bounded in `[-1,1]`, and every citation must reference a source
 whose `known_at` is no later than the citing event. Conflicting duplicate event

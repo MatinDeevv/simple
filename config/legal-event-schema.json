@@ -26,6 +26,12 @@
     "published_at",
     "known_at",
     "legal_stage",
+    "assessment_created_at",
+    "assessment_model_version",
+    "assessment_author",
+    "assessment_sha256",
+    "parent_assessment_sha256",
+    "sealed_before_market_data_through",
     "scenario_probabilities",
     "pair_exposures"
   ]

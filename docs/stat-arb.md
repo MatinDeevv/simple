@@ -57,12 +57,15 @@ v0.2 maintains two identity-free standardized residual levels, one for each
 regime definition:
 
 ```text
-S_t^j = rho_j S_(t-1)^j + P(z_t=j) e_t^j / sigma_t^j
+S_t^j = rho_j S_(t-1)^j + e_t^j / sigma_t^j
 S_t = P(z_t=low) S_t^low + P(z_t=high) S_t^high
 ```
 
 Each branch is updated only in its own mean/loading/scale definition; a regime
-switch cannot inject one model's innovation into the other level. At each entry
+switch cannot inject one model's innovation into the other level. The posterior
+is applied once, at the mixture stage; it is not also multiplied into a branch
+innovation. Emissions decompose each blended level change into branch-AR decay,
+full conditional innovation, and posterior reweighting. At each entry
 the selected component, both factor means/loadings/scales, regime probabilities,
 both level AR coefficients, basket, holding horizon, and stop are frozen.
 Future returns are reprojected through exactly those frozen definitions. The
@@ -73,10 +76,17 @@ gross_convergence = -sign(S_t) * (S_(t+h,frozen) - S_t)
 ```
 
 Residual convergence requires positive gross convergence and a smaller absolute
-frozen level. It remains explanatory. The **primary predictive label** is now
-whether the same frozen constrained basket has positive cumulative gross log
-return through the frozen horizon. This is still a no-cost diagnostic return,
-not PnL or an executable performance claim.
+frozen level. It remains explanatory. The **primary predictive target** is the
+frozen basket return standardized at entry:
+
+```text
+y = sum_h(w' r) / (sigma_basket,entry * sqrt(h))
+```
+
+The fixed neutral zone is `|y| <= 0.25`: positive and negative outcomes are
+the binary evaluation population, while neutral observations remain recorded
+but are not silently treated as losses. This is still a no-cost diagnostic
+return, not PnL or an executable performance claim.
 
 Every entry records projection distortion, fraction of the original signal
 preserved, correlation between basket returns and selected residual returns,
@@ -85,6 +95,23 @@ log return, and basket maximum adverse excursion. Emissions also retain
 residual MAE, time-to-zero, displacement removed, breakdown, frozen-path
 volatility, and turnover. A target is absent when even one arrival from entry
 through horizon is not an observed contiguous minute.
+
+## Basket-space modes and post-construction gate
+
+`cycle_neutral` is the frozen default: it enforces `D.T @ w = 0` in
+pair-coefficient space and therefore admits only closed currency loops, along
+with the selected factor-neutrality constraints. `relative_value` is a separate
+diagnostic contract: it imposes selected factor constraints and scales the
+resulting basket to a declared `max(abs(D.T @ w))` currency-incidence budget.
+It does not claim dollar or risk neutrality because contract notionals and FX
+conversion prices are not available.
+
+Selection is provisional until the actual basket is constructed. Probability
+and entry gating consume the post-projection signal-preservation fraction,
+projection distortion, expected basket/residual tracking, concentration, and
+gross exposure. The hard preservation gate is fixed at `0.35`; an erased or
+over-concentrated projection cannot enter merely because its pre-projection
+residual was large.
 
 ## Actual regime and graph effects
 

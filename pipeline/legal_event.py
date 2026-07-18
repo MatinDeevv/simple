@@ -44,8 +44,6 @@ SCENARIO_IMPACT = {
     "aggressive_enforcement": 1.25,
     "loophole": -0.25,
 }
-
-
 class ContractError(RuntimeError):
     """Raised when event lineage, timing, or canonical-data contracts fail."""
 
@@ -100,6 +98,26 @@ def canonical_event_hash(event: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def canonical_assessment_hash(event: dict[str, Any]) -> str:
+    """Hash the forecast object independently from its legal source record."""
+    payload = {
+        "assessment_created_at": parse_utc(event["assessment_created_at"], "assessment_created_at").isoformat(),
+        "assessment_model_version": event["assessment_model_version"],
+        "assessment_author": event["assessment_author"],
+        "parent_assessment_sha256": event["parent_assessment_sha256"],
+        "sealed_before_market_data_through": parse_utc(
+            event["sealed_before_market_data_through"], "sealed_before_market_data_through").isoformat(),
+        "scenario_probabilities": event["scenario_probabilities"],
+        "pair_exposures": event["pair_exposures"],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
 def validate_events(events: list[dict[str, Any]], schema: dict[str, Any]) -> list[dict[str, Any]]:
     """Validate immutable known-time records and their citation DAG."""
     if not events:
@@ -124,6 +142,20 @@ def validate_events(events: list[dict[str, Any]], schema: dict[str, Any]) -> lis
         known_at = parse_utc(event["known_at"], "known_at")
         if published_at > known_at:
             raise ContractError(f"event {event_id} has known_at before published_at")
+        assessment_created_at = parse_utc(event["assessment_created_at"], "assessment_created_at")
+        sealed_before_market_data_through = parse_utc(
+            event["sealed_before_market_data_through"], "sealed_before_market_data_through")
+        if assessment_created_at > known_at:
+            raise ContractError(f"event {event_id} assessment was created after known_at")
+        if sealed_before_market_data_through > assessment_created_at:
+            raise ContractError(f"event {event_id} assessment seal permits future market data")
+        if not isinstance(event["assessment_model_version"], str) or not event["assessment_model_version"]:
+            raise ContractError(f"event {event_id} assessment_model_version must be a nonempty string")
+        if not isinstance(event["assessment_author"], str) or not event["assessment_author"]:
+            raise ContractError(f"event {event_id} assessment_author must be a nonempty string")
+        parent_assessment = event["parent_assessment_sha256"]
+        if parent_assessment is not None and not _is_sha256(parent_assessment):
+            raise ContractError(f"event {event_id} parent_assessment_sha256 must be null or lowercase SHA-256")
         probabilities = event["scenario_probabilities"]
         if not isinstance(probabilities, dict) or set(probabilities) != allowed_scenarios:
             raise ContractError(f"event {event_id} must provide every fixed scenario probability")
@@ -143,7 +175,13 @@ def validate_events(events: list[dict[str, Any]], schema: dict[str, Any]) -> lis
             raise ContractError(f"event {event_id} cannot cite its own source document")
         event["published_at"] = published_at
         event["known_at"] = known_at
+        event["assessment_created_at"] = assessment_created_at
+        event["sealed_before_market_data_through"] = sealed_before_market_data_through
         event["citations"] = citations
+        if not _is_sha256(event["assessment_sha256"]):
+            raise ContractError(f"event {event_id} assessment_sha256 must be lowercase SHA-256")
+        if event["assessment_sha256"] != canonical_assessment_hash(event):
+            raise ContractError(f"event {event_id} assessment_sha256 does not match immutable assessment content")
         event["content_sha256"] = canonical_event_hash(raw)
         if event_id in by_id:
             if by_id[event_id]["content_sha256"] != event["content_sha256"]:
@@ -160,6 +198,17 @@ def validate_events(events: list[dict[str, Any]], schema: dict[str, Any]) -> lis
                 raise ContractError(f"event {event['event_id']} cites unknown document {citation}")
             if document_times[citation] > event["known_at"]:
                 raise ContractError(f"event {event['event_id']} cites a document not known at event time")
+    assessments = {event["assessment_sha256"]: event for event in normalized}
+    if len(assessments) != len(normalized):
+        raise ContractError("assessment_sha256 values must be unique in an append-only assessment ledger")
+    for event in normalized:
+        parent = event["parent_assessment_sha256"]
+        if parent is None:
+            continue
+        if parent not in assessments:
+            raise ContractError(f"event {event['event_id']} references an unknown parent assessment")
+        if assessments[parent]["assessment_created_at"] > event["assessment_created_at"]:
+            raise ContractError(f"event {event['event_id']} parent assessment is from the future")
     return sorted(normalized, key=lambda event: (event["known_at"], event["event_id"]))
 
 
@@ -237,6 +286,12 @@ def run_event_study(times: np.ndarray, log_prices: np.ndarray, events: list[dict
                 "legal_stage": event["legal_stage"],
                 "published_at": event["published_at"],
                 "known_at": event["known_at"],
+                "assessment_created_at": event["assessment_created_at"],
+                "assessment_model_version": event["assessment_model_version"],
+                "assessment_author": event["assessment_author"],
+                "assessment_sha256": event["assessment_sha256"],
+                "parent_assessment_sha256": event["parent_assessment_sha256"],
+                "sealed_before_market_data_through": event["sealed_before_market_data_through"],
                 "prediction_time": pd.Timestamp(int(times[start]), unit="ns", tz="UTC"),
                 "target_time": pd.Timestamp(int(times[end]), unit="ns", tz="UTC"),
                 "pair": pair,
@@ -261,6 +316,7 @@ def run_event_study(times: np.ndarray, log_prices: np.ndarray, events: list[dict
         "causality": {
             "event_decision_time": "first observed canonical bar strictly after immutable known_at",
             "citation_rule": "every cited source document must have known_at <= citing event known_at",
+            "assessment_rule": "assessment hash must match immutable scenario/exposure payload; creation and market-data seal must precede known_at; parent hashes form an append-only lineage",
             "target": f"post-known-time {config.horizon_steps}-minute gap-safe response",
             "event_data_required": "timestamped primary-source corpus with recorded scenario probabilities and pair exposures",
         },
@@ -319,7 +375,7 @@ def synthetic_events() -> list[dict[str, Any]]:
     scenarios["enacted"] = 0.70
     scenarios["diluted"] = 0.20
     scenarios["injunction"] = 0.10
-    return [{
+    event = {
         "event_id": "synthetic-rule-001",
         "source_document_id": "synthetic-primary-001",
         "jurisdiction": "TEST",
@@ -327,10 +383,17 @@ def synthetic_events() -> list[dict[str, Any]]:
         "published_at": "1970-01-01T00:03:00Z",
         "known_at": "1970-01-01T00:03:00Z",
         "legal_stage": "final_rule",
+        "assessment_created_at": "1970-01-01T00:02:00Z",
+        "assessment_model_version": "synthetic-ledger-v1",
+        "assessment_author": "synthetic-test",
+        "parent_assessment_sha256": None,
+        "sealed_before_market_data_through": "1970-01-01T00:02:00Z",
         "citations": [],
         "scenario_probabilities": scenarios,
         "pair_exposures": {"EURUSD": 0.8, "USDJPY": -0.4},
-    }]
+    }
+    event["assessment_sha256"] = canonical_assessment_hash(event)
+    return [event]
 
 
 def synthetic_input(rows: int = 400) -> tuple[np.ndarray, np.ndarray]:
