@@ -145,8 +145,8 @@ def validate_events(events: list[dict[str, Any]], schema: dict[str, Any]) -> lis
         assessment_created_at = parse_utc(event["assessment_created_at"], "assessment_created_at")
         sealed_before_market_data_through = parse_utc(
             event["sealed_before_market_data_through"], "sealed_before_market_data_through")
-        if assessment_created_at > known_at:
-            raise ContractError(f"event {event_id} assessment was created after known_at")
+        if known_at > assessment_created_at:
+            raise ContractError(f"event {event_id} assessment was created before its source was known")
         if sealed_before_market_data_through > assessment_created_at:
             raise ContractError(f"event {event_id} assessment seal permits future market data")
         if not isinstance(event["assessment_model_version"], str) or not event["assessment_model_version"]:
@@ -209,7 +209,7 @@ def validate_events(events: list[dict[str, Any]], schema: dict[str, Any]) -> lis
             raise ContractError(f"event {event['event_id']} references an unknown parent assessment")
         if assessments[parent]["assessment_created_at"] > event["assessment_created_at"]:
             raise ContractError(f"event {event['event_id']} parent assessment is from the future")
-    return sorted(normalized, key=lambda event: (event["known_at"], event["event_id"]))
+    return sorted(normalized, key=lambda event: (event["assessment_created_at"], event["event_id"]))
 
 
 def load_events(path: Path) -> list[dict[str, Any]]:
@@ -257,9 +257,10 @@ def run_event_study(times: np.ndarray, log_prices: np.ndarray, events: list[dict
         raise ContractError("event-study horizons must be positive")
     records: list[dict[str, Any]] = []
     for event in events:
-        # Strictly after known_at: never let a bar that closed at the same instant
-        # carry a document whose intra-bar availability is unknown.
-        start = int(np.searchsorted(times, event["known_at"].value, side="right"))
+        # An assessment cannot be acted on until both its source and its sealed
+        # assessment exist.  The first bar must close strictly after that time.
+        decision_at = max(event["known_at"], event["assessment_created_at"])
+        start = int(np.searchsorted(times, decision_at.value, side="right"))
         end = start + config.horizon_steps
         baseline_start = start - config.pre_event_baseline_steps
         if not _strict_contiguous_window(times, baseline_start, end):
@@ -287,6 +288,7 @@ def run_event_study(times: np.ndarray, log_prices: np.ndarray, events: list[dict
                 "published_at": event["published_at"],
                 "known_at": event["known_at"],
                 "assessment_created_at": event["assessment_created_at"],
+                "decision_at": decision_at,
                 "assessment_model_version": event["assessment_model_version"],
                 "assessment_author": event["assessment_author"],
                 "assessment_sha256": event["assessment_sha256"],
@@ -314,10 +316,10 @@ def run_event_study(times: np.ndarray, log_prices: np.ndarray, events: list[dict
         ),
         "pair_scope": list(PAIRS),
         "causality": {
-            "event_decision_time": "first observed canonical bar strictly after immutable known_at",
+            "event_decision_time": "first observed canonical bar strictly after max(known_at, assessment_created_at)",
             "citation_rule": "every cited source document must have known_at <= citing event known_at",
-            "assessment_rule": "assessment hash must match immutable scenario/exposure payload; creation and market-data seal must precede known_at; parent hashes form an append-only lineage",
-            "target": f"post-known-time {config.horizon_steps}-minute gap-safe response",
+            "assessment_rule": "published_at <= known_at <= assessment_created_at; assessment hash must match immutable scenario/exposure payload; market-data seal must not exceed assessment creation; parent hashes form an append-only lineage",
+            "target": f"post-decision-time {config.horizon_steps}-minute gap-safe response",
             "event_data_required": "timestamped primary-source corpus with recorded scenario probabilities and pair exposures",
         },
         "event_count": len(events),
@@ -370,6 +372,26 @@ def write_result(study: pd.DataFrame, summary: dict[str, Any], out_dir: Path, ev
     summary_path.write_text(json.dumps(summary, indent=2, default=str) + "\n", encoding="utf-8")
 
 
+def assessment_ledger_root(events: list[dict[str, Any]]) -> str:
+    """Deterministic Merkle-style root for an externally anchored ledger version."""
+    leaves = sorted(event["assessment_sha256"] for event in events)
+    return hashlib.sha256("".join(leaves).encode("ascii")).hexdigest()
+
+
+def write_ledger_anchor(events: list[dict[str, Any]], path: Path, external_reference: str) -> None:
+    """Write a publishable anchor request; caller must place the root externally.
+
+    ``external_reference`` is deliberately mandatory so a local file is never
+    represented as an immutable anchor (e.g. signed Git tag or TSA receipt).
+    """
+    if not isinstance(external_reference, str) or not external_reference.strip():
+        raise ContractError("external ledger anchor reference is required")
+    payload = {"ledger_root_sha256": assessment_ledger_root(events), "assessment_count": len(events),
+               "external_reference": external_reference, "anchor_status": "EXTERNALLY_REFERENCED"}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def synthetic_events() -> list[dict[str, Any]]:
     scenarios = {scenario: 0.0 for scenario in SCENARIO_IMPACT}
     scenarios["enacted"] = 0.70
@@ -383,11 +405,11 @@ def synthetic_events() -> list[dict[str, Any]]:
         "published_at": "1970-01-01T00:03:00Z",
         "known_at": "1970-01-01T00:03:00Z",
         "legal_stage": "final_rule",
-        "assessment_created_at": "1970-01-01T00:02:00Z",
+        "assessment_created_at": "1970-01-01T00:04:00Z",
         "assessment_model_version": "synthetic-ledger-v1",
         "assessment_author": "synthetic-test",
         "parent_assessment_sha256": None,
-        "sealed_before_market_data_through": "1970-01-01T00:02:00Z",
+        "sealed_before_market_data_through": "1970-01-01T00:04:00Z",
         "citations": [],
         "scenario_probabilities": scenarios,
         "pair_exposures": {"EURUSD": 0.8, "USDJPY": -0.4},
@@ -423,10 +445,10 @@ def self_check() -> dict[str, Any]:
         future_citation_rejected = True
     first_prediction = study["prediction_time"].min() if not study.empty else pd.NaT
     return {
-        "passed": bool(not study.empty and first_prediction > events[0]["known_at"]
+        "passed": bool(not study.empty and first_prediction > events[0]["assessment_created_at"]
                        and future_citation_rejected and summary["event_pair_observations"] == len(study)),
         "event_pair_observations": int(len(study)),
-        "prediction_strictly_after_known_at": bool(first_prediction > events[0]["known_at"]),
+        "prediction_strictly_after_decision_at": bool(first_prediction > events[0]["assessment_created_at"]),
         "future_citation_rejected": future_citation_rejected,
     }
 

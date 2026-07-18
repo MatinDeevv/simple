@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import sys
 from pathlib import Path
 
@@ -24,25 +25,25 @@ def test_event_pressure_respects_recorded_scenario_probabilities_and_pair_exposu
     assert np.count_nonzero(pressure) == 2
 
 
-def test_event_study_starts_strictly_after_known_time() -> None:
+def test_event_study_starts_strictly_after_sealed_assessment_decision_time() -> None:
     events = legal_event.validate_events(legal_event.synthetic_events(), legal_event.load_schema())
     times, prices = legal_event.synthetic_input()
     study, _summary = legal_event.run_event_study(
         times, prices, events, legal_event.EventStudyConfig(horizon_steps=20, pre_event_baseline_steps=2))
     assert not study.empty
-    assert (study["prediction_time"] > events[0]["known_at"]).all()
+    assert (study["prediction_time"] > events[0]["assessment_created_at"]).all()
     assert (study["target_time"] > study["prediction_time"]).all()
 
 
 def test_abnormal_return_uses_scaled_pre_event_expected_return() -> None:
     events = legal_event.validate_events(legal_event.synthetic_events(), legal_event.load_schema())
     times = np.arange(20, dtype=np.int64) * legal_event.DT_NS
-    # Event known at minute 3 starts at minute 4.  With two pre-event and four
+    # Assessment at minute 4 starts at minute 5. With two pre-event and four
     # post-event minutes, constant 1bp/min drift implies a 4bp expected return.
     log_prices = np.arange(20, dtype=np.float64)[:, None] * 0.01
     log_prices = np.repeat(log_prices, len(legal_event.PAIRS), axis=1)
     eurusd = legal_event.PAIRS.index("EURUSD")
-    log_prices[8, eurusd] += 0.02
+    log_prices[9, eurusd] += 0.02
     study, _summary = legal_event.run_event_study(
         times, log_prices, events, legal_event.EventStudyConfig(horizon_steps=4, pre_event_baseline_steps=2))
     row = study.loc[study["pair"] == "EURUSD"].iloc[0]
@@ -52,17 +53,23 @@ def test_abnormal_return_uses_scaled_pre_event_expected_return() -> None:
     assert row["baseline_adjusted_abnormal_log_return"] == pytest.approx(0.02)
 
 
-def test_assessment_provenance_is_hashed_sealed_and_append_only() -> None:
+def test_assessment_provenance_is_hashed_sealed_append_only_and_anchorable(tmp_path: Path) -> None:
     schema = legal_event.load_schema()
     event = legal_event.synthetic_events()[0]
     validated = legal_event.validate_events([event], schema)[0]
     assert validated["assessment_sha256"] == legal_event.canonical_assessment_hash(validated)
 
     hindsight = legal_event.synthetic_events()[0]
-    hindsight["sealed_before_market_data_through"] = "1970-01-01T00:04:00Z"
+    hindsight["sealed_before_market_data_through"] = "1970-01-01T00:05:00Z"
     hindsight["assessment_sha256"] = legal_event.canonical_assessment_hash(hindsight)
     with pytest.raises(legal_event.ContractError, match="future market data"):
         legal_event.validate_events([hindsight], schema)
+
+    impossible = legal_event.synthetic_events()[0]
+    impossible["assessment_created_at"] = "1970-01-01T00:02:00Z"
+    impossible["assessment_sha256"] = legal_event.canonical_assessment_hash(impossible)
+    with pytest.raises(legal_event.ContractError, match="before its source was known"):
+        legal_event.validate_events([impossible], schema)
 
     tampered = legal_event.synthetic_events()[0]
     tampered["pair_exposures"]["EURUSD"] = 0.1
@@ -81,6 +88,9 @@ def test_assessment_provenance_is_hashed_sealed_and_append_only() -> None:
     child["assessment_sha256"] = legal_event.canonical_assessment_hash(child)
     ledger = legal_event.validate_events([parent, child], schema)
     assert ledger[1]["parent_assessment_sha256"] == parent["assessment_sha256"]
+    anchor = tmp_path / "anchors" / "ledger.json"
+    legal_event.write_ledger_anchor(ledger, anchor, "signed-git-tag:legal-ledger-2026-07-18")
+    assert json.loads(anchor.read_text(encoding="utf-8"))["ledger_root_sha256"] == legal_event.assessment_ledger_root(ledger)
 
 
 def test_future_citation_and_conflicting_duplicate_are_rejected() -> None:
@@ -91,6 +101,9 @@ def test_future_citation_and_conflicting_duplicate_are_rejected() -> None:
     future["source_document_id"] = "synthetic-primary-002"
     future["published_at"] = "1970-01-01T00:10:00Z"
     future["known_at"] = "1970-01-01T00:10:00Z"
+    future["assessment_created_at"] = "1970-01-01T00:11:00Z"
+    future["sealed_before_market_data_through"] = "1970-01-01T00:11:00Z"
+    future["assessment_sha256"] = legal_event.canonical_assessment_hash(future)
     first["citations"] = [future["source_document_id"]]
     with pytest.raises(legal_event.ContractError, match="not known"):
         legal_event.validate_events([first, future], schema)

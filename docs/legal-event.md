@@ -36,20 +36,27 @@ exposures are bounded in `[-1,1]`, and every citation must reference a source
 whose `known_at` is no later than the citing event. Conflicting duplicate event
 identifiers and unavailable citations fail validation.
 
+The in-file hash chain proves internal consistency only. Each accepted ledger
+version must be externally anchored (for example, by a signed Git tag or trusted
+timestamp receipt). `write_ledger_anchor` writes the deterministic root and
+requires the external reference; it does not describe the local artifact itself
+as immutable.
+
 ## Causal study flow
 
 ```text
 immutable primary-source event at known_at
   -> validate schema, source hash, timestamps, and citation DAG
+  -> create and seal assessment at assessment_created_at >= known_at
   -> fixed scenario-weighted canonical-pair pressure vector
-  -> first canonical bar strictly after known_at
+  -> first canonical bar strictly after decision_at = max(known_at, assessment_created_at)
   -> only a fully contiguous post-event horizon is eligible
   -> estimate each pair's expected post return from its pre-event drift
   -> report baseline-adjusted abnormal return
 ```
 
-Using the first bar strictly after `known_at` avoids assuming the document was
-available before the close of a bar with the same timestamp. A gap through the
+Using the first bar strictly after `decision_at` avoids assuming the document or
+its assessment was available before the close of a bar with the same timestamp. A gap through the
 pre-event baseline or post-event target invalidates the observation instead of
 creating a session-crossing return.
 

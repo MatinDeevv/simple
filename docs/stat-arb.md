@@ -83,10 +83,10 @@ frozen basket return standardized at entry:
 y = sum_h(w' r) / (sigma_basket,entry * sqrt(h))
 ```
 
-The fixed neutral zone is `|y| <= 0.25`: positive and negative outcomes are
-the binary evaluation population, while neutral observations remain recorded
-but are not silently treated as losses. This is still a no-cost diagnostic
-return, not PnL or an executable performance claim.
+The fixed neutral zone is `|y| <= 0.25`. Primary evaluation is three-class
+(`negative`, `neutral`, `positive`) with multiclass log loss and Brier score;
+neutral observations are never removed from the primary score. This is still a
+no-cost diagnostic return, not PnL or an executable performance claim.
 
 Every entry records projection distortion, fraction of the original signal
 preserved, correlation between basket returns and selected residual returns,
@@ -101,15 +101,17 @@ through horizon is not an observed contiguous minute.
 `cycle_neutral` is the frozen default: it enforces `D.T @ w = 0` in
 pair-coefficient space and therefore admits only closed currency loops, along
 with the selected factor-neutrality constraints. `relative_value` is a separate
-diagnostic contract: it imposes selected factor constraints and scales the
-resulting basket to a declared `max(abs(D.T @ w))` currency-incidence budget.
+diagnostic contract: it solves a constrained projected utility problem with
+selected-factor neutrality, L1 gross normalization, per-pair caps, and a
+`max(abs(D.T @ w))` currency-incidence budget. The budget changes composition,
+rather than merely shrinking the same vector.
 It does not claim dollar or risk neutrality because contract notionals and FX
 conversion prices are not available.
 
 Selection is provisional until the actual basket is constructed. Probability
 and entry gating consume the post-projection signal-preservation fraction,
-projection distortion, expected basket/residual tracking, concentration, and
-gross exposure. The hard preservation gate is fixed at `0.35`; an erased or
+projection distortion, geometric signal alignment, and concentration. Gross
+exposure is only a nonzero eligibility check. The hard preservation gate is fixed at `0.35`; an erased or
 over-concentrated projection cannot enter merely because its pre-projection
 residual was large.
 

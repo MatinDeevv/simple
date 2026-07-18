@@ -1,5 +1,6 @@
 # Isolated Python 3.11 Qiskit Aer environment. Do not install into the base interpreter.
 dill==0.4.1
+matplotlib==3.11.1
 numpy==2.4.6
 pandas==3.0.3
 psutil==7.2.2
