@@ -18,6 +18,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from contracts import ContractError as SharedContractError
+from contracts import canonical_pair_order, contiguous_60s
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DIR = ROOT / "data_canonical"
@@ -26,10 +29,7 @@ MANIFEST_PATH = CANONICAL_DIR / "manifest.json"
 COUPLING_PATH = DERIVED_DIR / "coupling_estimates.parquet"
 
 # This is the canonical manifest order and is intentionally also the qubit order.
-PAIRS = (
-    "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD",
-    "USDCNH", "USDCHF", "EURGBP", "EURJPY", "GBPJPY",
-)
+PAIRS = canonical_pair_order(ROOT)
 N_QUBITS = len(PAIRS)
 DIMENSION = 1 << N_QUBITS
 DT_NS = 60_000_000_000
@@ -322,8 +322,8 @@ def build_candidates(times: np.ndarray, log_close: np.ndarray, coupling_times: n
     for i in range(first, end):
         output_i = i - first
         now = int(times[i])
-        previous_contiguous = i > 0 and times[i] - times[i - 1] == DT_NS
-        next_contiguous = times[i + 1] - times[i] == DT_NS
+        previous_contiguous = i > 0 and contiguous_60s(times[i - 1], times[i], DT_NS)
+        next_contiguous = contiguous_60s(times[i], times[i + 1], DT_NS)
         while cursor + 1 < len(coupling_times) and coupling_times[cursor + 1] <= now:
             cursor += 1
         age_s = (now - int(coupling_times[cursor])) / 1e9
@@ -686,7 +686,7 @@ def main(argv: list[str] | None = None) -> int:
         run(args.max_steps, args.max_train_samples, args.max_oos_samples, args.landmarks,
             args.seed, args.train_fraction, args.ridge, args.out_dir.resolve())
         return 0
-    except (ContractError, ValueError, OSError, np.linalg.LinAlgError) as exc:
+    except (ContractError, SharedContractError, ValueError, OSError, np.linalg.LinAlgError) as exc:
         print(f"[FATAL] {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 

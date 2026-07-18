@@ -17,15 +17,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from contracts import canonical_pair_order, contiguous_60s
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DIR = ROOT / "data_canonical"
 DERIVED_DIR = ROOT / "data_derived"
 
-PAIRS = (
-    "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD",
-    "USDCNH", "USDCHF", "EURGBP", "EURJPY", "GBPJPY",
-)
+PAIRS = canonical_pair_order(ROOT)
 N_SITES = len(PAIRS)
 LOCAL_DIM = 3
 DT_S = 60.0
@@ -570,8 +569,8 @@ def run(max_steps: int, chi: int, cutoff: float, seed: int, oos_fraction: float,
 
     for i in range(first, end):
         now_ns = int(times[i])
-        previous_contiguous = i > 0 and times[i] - times[i - 1] == DT_NS
-        next_contiguous = times[i + 1] - times[i] == DT_NS
+        previous_contiguous = i > 0 and contiguous_60s(times[i - 1], times[i], DT_NS)
+        next_contiguous = contiguous_60s(times[i], times[i + 1], DT_NS)
         while cursor + 1 < len(coupling["times"]) and coupling["times"][cursor + 1] <= now_ns:
             cursor += 1
         coupling_time = int(coupling["times"][cursor])

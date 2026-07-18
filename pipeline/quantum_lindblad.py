@@ -18,12 +18,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from contracts import ContractError as SharedContractError
+from contracts import canonical_pair_order, contiguous_60s
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DIR = ROOT / "data_canonical"
 DERIVED_DIR = ROOT / "data_derived"
-PAIRS = ("EURUSD", "USDJPY", "USDCNH")
 PAIR_INDICES = (0, 1, 5)
+PAIRS = tuple(canonical_pair_order(ROOT)[index] for index in PAIR_INDICES)
 
 DT_S = 60.0
 DT_NS = int(DT_S * 1_000_000_000)
@@ -36,7 +39,7 @@ DEPHASING_PER_STEP = 0.02
 MAX_STANDARDIZED_RETURN = 5.0
 MAX_COUPLING_AGE_S = 36.0 * 3_600.0
 DEFAULT_MAX_STEPS = 250_000
-VERSION = "quantum-lindblad-1.1.0"
+VERSION = "quantum-lindblad-1.2.0"
 
 
 class ContractError(RuntimeError):
@@ -57,6 +60,23 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def count_cross_gap_state_updates(records: dict[str, list[object]]) -> int:
+    """Count scored emissions that claim an invalid predecessor edge.
+
+    This is intentionally computed from the persisted minute-record fields,
+    rather than maintained as an incidental loop counter.  It makes the audit
+    result independently checkable from the emitted replay surface.
+    """
+    reasons = records.get("reason")
+    predecessors = records.get("previous_contiguous_60s")
+    if reasons is None or predecessors is None or len(reasons) != len(predecessors):
+        raise ContractError("minute records lack aligned gap-audit fields")
+    return int(sum(
+        reason == "scored_contiguous" and not bool(previous)
+        for reason, previous in zip(reasons, predecessors, strict=True)
+    ))
 
 
 def load_prices() -> tuple[np.ndarray, np.ndarray]:
@@ -188,6 +208,7 @@ def self_check() -> dict[str, object]:
 
 def append_minute(records: dict[str, list[object]], *, now_ns: int, next_ns: int,
                   reason: str, coupling_ns: int, coupling_age_s: float,
+                  previous_contiguous: bool,
                   z: np.ndarray | None = None, probabilities: np.ndarray | None = None,
                   target: int | None = None, next_ret: np.ndarray | None = None,
                   matrix: np.ndarray | None = None, trace_error: float = math.nan,
@@ -196,6 +217,7 @@ def append_minute(records: dict[str, list[object]], *, now_ns: int, next_ns: int
     records["timestamp"].append(utc_timestamp(now_ns))
     records["target_time"].append(utc_timestamp(next_ns))
     records["reason"].append(reason)
+    records["previous_contiguous_60s"].append(previous_contiguous)
     records["coupling_update_time"].append(utc_timestamp(coupling_ns))
     records["coupling_age_s"].append(coupling_age_s)
     records["target_index"].append(np.nan if target is None else target)
@@ -219,7 +241,7 @@ def run(max_steps: int, out_dir: Path, max_coupling_age_s: float) -> dict[str, o
     times, x = load_prices()
     coupling = load_coupling()
     first = int(np.searchsorted(times, coupling["times"][0], side="left"))
-    while first < len(times) and (first == 0 or times[first] - times[first - 1] != DT_NS):
+    while first < len(times) and (first == 0 or not contiguous_60s(times[first - 1], times[first], DT_NS)):
         first += 1
     if first >= len(times) - 2:
         raise ContractError("no contiguous start after first causal coupling estimate")
@@ -233,7 +255,7 @@ def run(max_steps: int, out_dir: Path, max_coupling_age_s: float) -> dict[str, o
 
     records: dict[str, list[object]] = {
         key: [] for key in (
-            "timestamp", "target_time", "reason", "coupling_update_time", "coupling_age_s",
+            "timestamp", "target_time", "reason", "previous_contiguous_60s", "coupling_update_time", "coupling_age_s",
             "target_index", "trace_error", "hermitian_error", "min_eigenvalue",
             "instrument_completeness_error",
             *[f"{prefix}_{pair.lower()}" for prefix in ("z", "p", "next_log_return") for pair in PAIRS],
@@ -243,7 +265,6 @@ def run(max_steps: int, out_dir: Path, max_coupling_age_s: float) -> dict[str, o
     daily: list[dict[str, object]] = []
     current_day: int | None = None
     gap_resets = 0
-    cross_gap_state_updates = 0
     leading_gap_skips = 0
     stale_coupling_skips = 0
     stale_coupling_resets = 0
@@ -273,19 +294,20 @@ def run(max_steps: int, out_dir: Path, max_coupling_age_s: float) -> dict[str, o
         coupling_age_s = (now_ns - coupling_ns) / 1_000_000_000.0
         max_coupling_age_seen_s = max(max_coupling_age_seen_s, coupling_age_s)
 
-        if i > first and now_ns - int(times[i - 1]) != DT_NS:
+        previous_contiguous = i == first or contiguous_60s(int(times[i - 1]), now_ns, DT_NS)
+        if not previous_contiguous:
             rho = np.eye(3, dtype=np.complex128) / 3.0
             sigma2.fill(1e-8)
             gap_resets += 1
             append_minute(records, now_ns=now_ns, next_ns=next_ns,
                           reason="cross_gap_return_reset", coupling_ns=coupling_ns,
-                          coupling_age_s=coupling_age_s)
+                          coupling_age_s=coupling_age_s, previous_contiguous=False)
             continue
-        if next_ns - now_ns != DT_NS:
+        if not contiguous_60s(now_ns, next_ns, DT_NS):
             leading_gap_skips += 1
             append_minute(records, now_ns=now_ns, next_ns=next_ns,
                           reason="next_bar_gap_skip", coupling_ns=coupling_ns,
-                          coupling_age_s=coupling_age_s)
+                          coupling_age_s=coupling_age_s, previous_contiguous=True)
             continue
         if coupling_age_s > max_coupling_age_s:
             if not stale_active:
@@ -296,7 +318,7 @@ def run(max_steps: int, out_dir: Path, max_coupling_age_s: float) -> dict[str, o
             stale_coupling_skips += 1
             append_minute(records, now_ns=now_ns, next_ns=next_ns,
                           reason="stale_coupling_skip", coupling_ns=coupling_ns,
-                          coupling_age_s=coupling_age_s)
+                          coupling_age_s=coupling_age_s, previous_contiguous=True)
             continue
         stale_active = False
 
@@ -330,6 +352,7 @@ def run(max_steps: int, out_dir: Path, max_coupling_age_s: float) -> dict[str, o
 
         append_minute(records, now_ns=now_ns, next_ns=next_ns,
                       reason="scored_contiguous", coupling_ns=coupling_ns,
+                      previous_contiguous=True,
                       coupling_age_s=coupling_age_s, z=z, probabilities=probabilities,
                       target=target, next_ret=next_ret, matrix=matrix,
                       trace_error=trace_error, hermitian_error=hermitian_error,
@@ -354,6 +377,7 @@ def run(max_steps: int, out_dir: Path, max_coupling_age_s: float) -> dict[str, o
 
     if target_count == 0 or not daily:
         raise ContractError("experiment produced no scored contiguous samples")
+    cross_gap_state_updates = count_cross_gap_state_updates(records)
     if cross_gap_state_updates != 0:
         raise ContractError("cross-gap return reached a state update")
     if (max_trace_error >= 1e-10 or max_hermitian_error >= 1e-10
@@ -475,7 +499,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         run(args.max_steps, args.out_dir.resolve(), args.max_coupling_age_s)
         return 0
-    except (ContractError, ValueError, np.linalg.LinAlgError, OSError) as exc:
+    except (ContractError, SharedContractError, ValueError, np.linalg.LinAlgError, OSError) as exc:
         print(f"[FATAL] {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 

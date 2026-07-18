@@ -2,12 +2,12 @@
 
 ## Decision
 
-Under an explicit complexity-stress-test mandate, this checkout now reaches
+The quantum branch is **frozen** as a negative-results archive. It contains
 qutrit density/trajectory filters, ten-qutrit MPS/TEBD dynamics, an exact
-ten-qubit fidelity kernel, a ten-qubit re-uploading reservoir, and qutrit
-Choi/process tomography. These are isolated experiments, not a replacement
-for the canonical simulator or a route to live trading. Their negative
-baseline results are evidence to stop scaling, not a reason to conceal them.
+ten-qubit fidelity kernel, a ten-qubit re-uploading reservoir, process
+tomography, and Aer noise calibration. These artifacts remain reproducible but
+no new quantum representation may be added until the shared target, classical
+comparators, and untouched-fold protocol in OQ-14 are satisfied.
 
 This document uses *quantum* in a narrow, literal sense: software evolves
 complex state vectors or density operators under quantum-mechanical maps. It
@@ -27,10 +27,10 @@ scope permanently for this project.
 |---|---|---|
 | Implemented branch | Direct qutrit filter, 96-seed qutrit unraveling, ten-qutrit MPS/TEBD trajectory, exact ten-qubit fidelity kernel, fixed ten-qubit reservoir, qutrit channel tomography, and ten-qubit Aer noise calibration | All are noncanonical, numerically constrained research branches |
 | Executed artifacts | Lindblad: 250,000 rows / 234,825 scored / zero cross-gap updates; trajectories: 243,208 valid updates; MPS: 500-row `chi=16` replay; kernel: 250,000-row audit with 384/192 bounded train/OOS samples; reservoir: 50,000 rows with 34,448/14,657 train/OOS samples; tomography: 481 sampled CPTP channels; Aer: 24 causal circuits x 4,096 shots | Numerical checks pass where applicable, but every predictive branch fails its promotion gate |
-| Scientific stack | Base: NumPy/SciPy plus scikit-learn. Isolated `.venv-quantum`: Qiskit 2.4.2 and Aer 0.17.2 | Exact statevectors, bounded MPS, and declared noisy density-matrix circuit simulation are possible locally |
+| Scientific stack | Core: NumPy/pandas/pyarrow. Isolated `.venv-quantum`: Qiskit 2.4.2 and Aer 0.17.2 | Exact statevectors, bounded MPS, and declared noisy density-matrix circuit simulation are possible locally |
 | Absent packages | PennyLane, Cirq, quimb, TeNPy, Qiskit Runtime, Braket, Azure Quantum, and all provider credentials/backends are absent | Alternative framework and real-hardware tiers remain blocked; Aer's synthetic noise model is not a backend calibration |
 | Hardware access | No credential/configuration artifact for IBM, Braket, Azure, or another quantum provider was found | Hardware execution is blocked |
-| Integration status | OQ-13 is explicitly noncanonical; the state schema bars it from changing the classical simulator, controller, or trading logic | Preserve this isolation at every tier |
+| Integration status | OQ-13 is frozen and noncanonical; the state schema bars it from changing the classical simulator, controller, or trading logic | Preserve the archive; advance OQ-14/core dynamics instead |
 
 The updated Lindblad result is 37.842% top-1 with Brier 0.787543, versus a
 causal class-prior's 57.792% / 0.540073 on the same first segment. The
@@ -38,7 +38,7 @@ trajectory final-30% diagnostic is 37.817% / 0.668522, versus its frozen class
 prior's 50.061% / 0.602831. The ten-qutrit MPS reaches 6.040% / 0.904375
 against uniform 10% / 0.900000 on its bounded OOS slice; the exact kernel is
 18.750% / 0.889459 against frozen prior 32.292% / 0.849528; and the reservoir
-is 23.327% / 0.893486 against frozen prior 23.395% / 0.871358. None is
+is 23.313% / 0.893500 against frozen prior 23.395% / 0.871358. None is
 evidence against a matched classical model and none may select a larger model.
 
 ## Non-negotiable data and validation contract

@@ -18,13 +18,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from contracts import canonical_pair_order, contiguous_60s
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DIR = ROOT / "data_canonical"
 DERIVED_DIR = ROOT / "data_derived"
 
-PAIRS = ("EURUSD", "USDJPY", "USDCNH")
 PAIR_INDICES = (0, 1, 5)
+PAIRS = tuple(canonical_pair_order(ROOT)[index] for index in PAIR_INDICES)
 DIMENSION = len(PAIRS)
 
 DT_S = 60.0
@@ -419,8 +421,8 @@ def run(max_steps: int, trajectories: int, seed: int, oos_fraction: float,
 
     for i in range(first, end):
         now_ns = int(times[i])
-        previous_contiguous = i > 0 and times[i] - times[i - 1] == DT_NS
-        next_contiguous = times[i + 1] - times[i] == DT_NS
+        previous_contiguous = i > 0 and contiguous_60s(times[i - 1], times[i], DT_NS)
+        next_contiguous = contiguous_60s(times[i], times[i + 1], DT_NS)
         while (coupling_cursor + 1 < len(coupling["times"])
                and coupling["times"][coupling_cursor + 1] <= now_ns):
             coupling_cursor += 1

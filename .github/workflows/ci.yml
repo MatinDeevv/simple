@@ -1,0 +1,35 @@
+name: numerical-contracts
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-core.txt
+      - run: python -m pytest tests -q
+      - run: python pipeline/simulate_integrator.py --self-check
+      - run: python pipeline/quantum_lindblad.py --self-check
+      - run: python pipeline/quantum_trajectories.py --self-check
+      - run: python pipeline/quantum_process_tomography.py --self-check
+      - run: python pipeline/quantum_mps.py --self-check
+      - run: python pipeline/quantum_kernel.py --self-check
+      - run: python pipeline/quantum_reservoir.py --self-check
+
+  aer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-quantum.txt
+      - run: python pipeline/quantum_aer_noise.py --self-check

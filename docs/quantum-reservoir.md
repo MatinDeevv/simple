@@ -8,9 +8,13 @@ this result.
 
 ## Circuit
 
-The reservoir has one qubit per canonical pair:
+The reservoir has one qubit per canonical manifest index, loaded at runtime:
 
-AUDUSD, EURGBP, EURJPY, EURUSD, GBPJPY, GBPUSD, USDCAD, USDCHF, USDCNH, USDJPY.
+EURUSD, USDJPY, GBPUSD, AUDUSD, USDCAD, USDCNH, USDCHF, EURGBP, EURJPY, GBPJPY.
+
+The nearest-neighbour ring is therefore comparable with the kernel and MPS
+experiments. A different graph requires an explicit permutation and hash; it
+may not silently arise from filesystem/alphabetical ordering.
 
 It maintains a normalized complex state vector in a 1,024-dimensional Hilbert
 space. For every valid minute t, its current input is the ten-vector
@@ -41,8 +45,11 @@ learned readout.
 
 ## Causal and gap contract
 
-The target is the pair with the largest absolute valid one-minute return at
-t+1. It is not encoded into the state or used in the circuit parameters. At a
+The archived target is the pair with the largest absolute valid one-minute
+return at t+1. It is not encoded into the state or used in the circuit
+parameters, but it is volatility-prior dominated and is frozen as rejected.
+OQ-14 must define a shared volatility-neutralized or distributional target
+before this branch can be rerun. At a
 missing/non-60-second interval:
 
 1. The pre-gap row is not encoded or scored because its target is invalid.
@@ -75,7 +82,7 @@ The committed run used 50,000 latest raw rows from 2024-11-11T08:40:00Z through
 | Train / OOS updates | 34,448 / 14,657 |
 | Gap state resets | 499 |
 | Cross-gap state updates | 0 |
-| Maximum state-norm error | 3.280e-13 |
+| Maximum state-norm error | 3.428e-13 |
 | Gate-by-gate vs compiled ring error | 2.861e-17 |
 | Fixed-seed replay / gate checks | pass |
 
@@ -83,8 +90,8 @@ The frozen OOS diagnostic is not promotable:
 
 | Predictor | Top-1 accuracy | Brier | Log loss |
 |---|---:|---:|---:|
-| Quantum-reservoir + ridge readout | 0.233267 | 0.893486 | 2.270701 |
-| Uniform | 0.233950 | 0.900000 | 2.302585 |
+| Quantum-reservoir + ridge readout | 0.233131 | 0.893500 | 2.270782 |
+| Uniform expected top-1 | 0.100000 | 0.900000 | 2.302585 |
 | Frozen train class prior | 0.233950 | 0.871358 | 2.170091 |
 | Frozen train modal class | 0.233950 | 1.532101 | 26.458442 |
 

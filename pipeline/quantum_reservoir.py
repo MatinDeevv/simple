@@ -19,15 +19,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from contracts import ContractError as SharedContractError
+from contracts import canonical_pair_order, contiguous_60s
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DIR = ROOT / "data_canonical"
 DERIVED_DIR = ROOT / "data_derived"
 
-PAIRS = (
-    "AUDUSD", "EURGBP", "EURJPY", "EURUSD", "GBPJPY",
-    "GBPUSD", "USDCAD", "USDCHF", "USDCNH", "USDJPY",
-)
+PAIRS = canonical_pair_order(ROOT)
 N_QUBITS = len(PAIRS)
 DIMENSION = 1 << N_QUBITS
 LAYERS = 3
@@ -43,7 +43,7 @@ DEFAULT_MAX_STEPS = 50_000
 DEFAULT_SEED = 20260718
 DEFAULT_OOS_FRACTION = 0.70
 DEFAULT_RIDGE = 5.0
-VERSION = "quantum-reservoir-1.0.0"
+VERSION = "quantum-reservoir-1.1.0"
 
 
 class ContractError(RuntimeError):
@@ -521,8 +521,8 @@ def run(max_steps: int, seed: int, oos_fraction: float, ridge: float,
         now_ns = int(times[i])
         previous_ns = int(times[i - 1])
         next_ns = int(times[i + 1])
-        previous_contiguous = now_ns - previous_ns == DT_NS
-        next_contiguous = next_ns - now_ns == DT_NS
+        previous_contiguous = contiguous_60s(previous_ns, now_ns, DT_NS)
+        next_contiguous = contiguous_60s(now_ns, next_ns, DT_NS)
         phase = "oos" if i >= oos_start else "train"
         if not previous_contiguous:
             # Never form x_t - x_(t-1), encode it, or let state memory bridge a gap.
@@ -768,7 +768,7 @@ def main(argv: list[str] | None = None) -> int:
         run(args.max_steps, args.seed, args.oos_fraction, args.ridge,
             args.out_dir.resolve())
         return 0
-    except (ContractError, ValueError, OSError, np.linalg.LinAlgError) as exc:
+    except (ContractError, SharedContractError, ValueError, OSError, np.linalg.LinAlgError) as exc:
         print(f"[FATAL] {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 

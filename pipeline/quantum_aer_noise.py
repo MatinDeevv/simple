@@ -16,6 +16,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from contracts import canonical_pair_order, contiguous_60s
+
 try:
     import qiskit
     import qiskit_aer
@@ -62,9 +64,8 @@ def epoch_ns(values: object) -> np.ndarray:
 
 
 def pair_order() -> tuple[str, ...]:
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    pairs = tuple(manifest["instrument_index_order"])
-    if len(pairs) != N_QUBITS or len(set(pairs)) != N_QUBITS:
+    pairs = canonical_pair_order(ROOT)
+    if len(pairs) != N_QUBITS:
         raise ContractError("canonical manifest does not define exactly ten unique qubits")
     return pairs
 
@@ -100,8 +101,8 @@ def causal_z_samples(times: np.ndarray, log_close: np.ndarray, max_samples: int)
     valid: list[dict[str, object]] = []
     post_gap_skips = pre_gap_skips = 0
     for i in range(1, len(times) - 1):
-        previous_ok = int(times[i]) - int(times[i - 1]) == DT_NS
-        next_ok = int(times[i + 1]) - int(times[i]) == DT_NS
+        previous_ok = contiguous_60s(int(times[i - 1]), int(times[i]), DT_NS)
+        next_ok = contiguous_60s(int(times[i]), int(times[i + 1]), DT_NS)
         if not previous_ok:
             sigma2.fill(1e-8)
             post_gap_skips += 1

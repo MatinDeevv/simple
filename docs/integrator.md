@@ -1,102 +1,108 @@
-# Stability-Checked Integrator (OQ-8, OQ-9)
+# Classical Integrator: Numerical Safety, Not Harmonic-Model Acceptance
 
-| Item | Accepted v1 contract |
+| Item | Current contract |
 |---|---|
 | Owner | sim-integrator |
-| Implementation | pipeline/simulate_integrator.py, integrator-1.1.0 |
-| Executed command | python pipeline/simulate_integrator.py --max-steps 250000 |
-| Scope | EURUSD, USDJPY, USDCNH only; indices [0,1,5] |
-| Inputs | Canonical BID parquet, the three accepted dynamics streams, and the corresponding 3x3 submatrix of accepted daily C |
-| Non-claim | This is not a 10-pair simulation: the other seven dynamics streams have not been estimated. |
+| Implementation | `pipeline/simulate_integrator.py`, `integrator-1.2.0` |
+| Scope | EURUSD, USDJPY, USDCNH only; indices `[0,1,5]` |
+| Status | Gap handling closed; harmonic-curvature identification and non-normal stability acceptance reopened |
+| Non-claim | This is neither a ten-pair simulation nor a validated restoring-force model. |
 
-## Discrete state update
+## Discrete update
 
-The script uses semi-implicit Euler: damping is implicit and position uses the
-new velocity. At a contiguous 60-second bar, use causal zero-order-held
-parameters at time t:
+At a contiguous 60-second arrival, parameters and coupling are zero-order-held
+from the previous timestamp `t`:
 
-    g(t) = 60 * v_hat(t)
-    A_c(t) = C(t) * g(t)                         # specific acceleration
-    kappa_raw(t) = k(t) / m(t)
-    gamma(t) = c(t) / m(t)
-    kappa_sim(t) = max(kappa_raw(t), 0)          # explicit stability guard
+```text
+g(t) = 60 * v_hat(t)
+A_c(t) = C(t) * g(t)                    # specific acceleration
+kappa_raw(t) = k(t) / m(t)
+gamma(t) = c(t) / m(t)
+kappa_sim(t) = max(kappa_raw(t), 0)     # model-changing projection
 
-    v_hat(t+60) =
-     [v_hat(t) + 60 * (-kappa_sim(t)*(x_hat(t)-x_eq(t)) + A_c(t))]
-     / [1 + 60*gamma(t)]
+v_hat(t+60) = [v_hat(t) + 60 * (-kappa_sim(t)*(x_hat(t)-x_eq(t)) + A_c(t))]
+              / [1 + 60*gamma(t)]
+x_hat(t+60) = x_hat(t) + 60*v_hat(t+60)
+```
 
-    x_hat(t+60) = x_hat(t) + 60*v_hat(t+60)
+`C` maps `g` to specific acceleration and is therefore not divided by mass.
+Forcing remains zero: adding residual forcing before jointly conditioning it on
+coupling would double-count cross-pair effects.
 
-C is not divided by mass. It was fitted as the map from g to specific
-acceleration. This matches the source-schema physical equation because the
-physical coupling force is m*A_c.
+## Gap and checkpoint contracts
 
-The replay uses epsilon=0: dynamics residual scale was fitted before coupling
-was conditioned into the residual, so adding sampled forcing here would risk
-double counting cross-pair effects. This is a deterministic, conservative
-stability test rather than a jointly calibrated stochastic simulator.
+When an arriving bar reveals `dt != 60 s`, the replay takes no large step,
+sets `x_hat` to the observed position, sets `v_hat=0`, and logs the reset. The
+first later contiguous arrival is eligible again; no session-crossing velocity
+is fabricated.
 
-## OQ-8 gap policy
+A checkpoint now stores two unambiguous indices:
 
-At arrival of a canonical bar, calculate dt_observed=t_arrival-t_previous.
+```text
+state_index          state is x_hat/v_hat at times[state_index]
+next_arrival_index   exactly the next row to process; state_index + 1
+```
 
-| Condition | Action |
-|---|---|
-| dt_observed = 60 s and guarded state is stable | Take the update above. |
-| dt_observed != 60 s | Do not take a large step. Set x_hat=x_observed, v_hat=0, record RESET_TO_OBSERVED_POSITION_ZERO_VELOCITY, and resume only when a later contiguous bar arrives. |
-| Guarded amplification unstable | Do not clip coupling or integrate. Hold to the arriving observed state and record REJECT_UNSTABLE_CONFIG_HOLD_OBSERVED. |
+Resume begins at `next_arrival_index`, not the following row. The test suite
+proves a split/resumed replay reaches the same final state as an uninterrupted
+replay, including the legacy `integrator-1.1.0` checkpoint payload.
 
-This policy is causal: the reset is made when the next bar reveals the gap,
-not from knowledge of a future missing bar. No velocity is fabricated across
-weekend, session, or intra-session gaps.
+## Non-normal stability diagnostics
 
-## OQ-9 stability test and signed-curvature guard
+The directional coupling field makes the six-state amplification matrix
+potentially non-normal, so `rho(A) <= 1` alone is insufficient. For every
+causal configuration, the script reports:
 
-For each input-configuration change, the script builds the 6x6 linear update
-matrix for [x_hat, v_hat] and computes rho(A), its spectral radius. The
-numerical acceptance criterion is rho(A) <= 1 + 1e-10. It additionally
-brackets a stable timestep by bisection, capped at 3600 seconds.
+- spectral radius `rho(A)`;
+- largest singular value `sigma_max(A)`;
+- eigenvector condition number;
+- `max_{1<=n<=60} ||A^n||_2`;
+- an estimated unit-circle pseudospectral distance from sampled resolvents.
 
-Raw fitted kappa can be negative. That is retained in
-dynamics_params_<PAIR>.parquet and the raw spectral result is reported. A
-negative-curvature state is not a stable spring, so the integrator's explicit
-simulation guard is kappa_sim=max(kappa_raw,0). Every applied guard is
-recorded as PROJECT_NEGATIVE_KAPPA_TO_ZERO; coupling is never suppressed.
-If the guarded update were still unstable, it would be rejected rather than
-integrated.
+Norm-based quantities use the dimensionally balanced state `[x_hat, 60*v_hat]`
+rather than `[x_hat, v_hat]`. The timestep report is a sampled grid from 1 to
+3,600 seconds; it records stable segments and makes no monotonic-bisection
+claim. A configuration is integrated only if the guarded 60-second spectral
+and 60-step transient-growth checks pass.
 
-## Checkpoint and resume
+## Negative curvature is a model failure signal
 
-data_derived/integrator_checkpoint.json stores pair scope, next canonical row
-index, last timestamp, x_hat, and v_hat. --resume validates that contract
-against the canonical timestamp, restores state, then reloads parameter and
-coupling values by causal timestamp. It never infers a gap-crossing velocity.
+The projection `kappa_sim=max(kappa_raw,0)` is not a solver-only guard. It
+replaces a negative local quadratic potential with a flat one. It is logged as
+`MODEL_PROJECT_NEGATIVE_KAPPA_TO_ZERO`, and any replay using it has
+`model_status=REJECTED_HARMONIC_IDENTIFICATION_NEGATIVE_CURVATURE_PROJECTED`.
 
-## Executed result
+The next research question is not another guard. It is how to identify a
+bounded nonlinear potential, regime model, or estimation-noise explanation
+without selecting it on the evaluation data. A quartic potential is only a
+candidate specification; it has not been implemented or accepted.
+
+## Executed canonical replay
+
+Command:
+
+```powershell
+python pipeline\simulate_integrator.py --max-steps 250000
+```
 
 | Metric | Result |
 |---|---:|
 | Stability configurations | 3,850 |
-| Raw maximum rho(A) at 60 s | 1.000590684 |
-| Raw 60-s pass | No; signed-curvature configurations require the explicit guard |
-| Negative-curvature configurations projected | 2,565 |
-| Guarded maximum rho(A) at 60 s | 1.000000000 |
-| Guarded 60-s pass | Yes |
-| Minimum guarded stable-dt lower bound | 179.088 s |
-| Real canonical rows replayed | 250,001 |
-| Continuous 60-s updates | 246,297 |
+| Raw maximum 60-s spectral radius | 1.000590684 |
+| Negative-curvature configurations | 2,565 |
+| Guarded maximum 60-s spectral radius | 1.000000000 |
+| Guarded maximum singular value | 1.449185 |
+| Guarded maximum 60-step transient growth | 2.625709 |
+| Transient-growth limit | 10.0 |
+| Minimum sampled stable-dt maximum | 150 s |
+| Arrivals processed / contiguous updates | 250,000 / 246,297 |
 | Market-gap resets | 3,703 |
-| Logged negative-curvature projections in replay | 155 configurations / 153,863 steps |
-| Integrated unstable steps | 0 |
-| Finite-state check | Pass |
-| Replay span | 2015-01-30 21:51 UTC to 2015-10-20 08:14 UTC |
+| Negative-curvature projected replay steps | 153,863 |
+| Numerical safety | Pass: finite state, no guarded spectral/transient rejection |
+| Harmonic-model identification | Rejected: projection was required in most replay steps |
 
-The pseudo-energy diagnostic is recorded per day, but is not treated as
-conserved: moving equilibrium, damping, coupling, and causal resets make this
-a forced/dissipative system. Stability is instead evidenced by the guarded
-spectral-radius bound, finite-state check, explicit guard events, and bounded
-state norm.
-
-Outputs are data_derived/integrator_stability.parquet,
-integrator_replay_daily.parquet, integrator_gap_events.parquet,
-integrator_summary.json, and the checkpoint above.
+The pseudo-energy output remains diagnostic only; damping, moving equilibrium,
+coupling, and resets make this a forced/dissipative system. Outputs are
+`data_derived/integrator_stability.parquet`,
+`integrator_replay_daily.parquet`, `integrator_gap_events.parquet`,
+`integrator_summary.json`, and `integrator_checkpoint.json`.

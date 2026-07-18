@@ -56,7 +56,9 @@ whose timestamp is no later than `t`. A non-60-second arrival resets both
 `rho` and the EWMA state; the first post-gap row is logged and skipped before
 a return can be formed. A row whose next bar is noncontiguous is also skipped.
 Coupling older than 36 hours causes a reset and skip rather than a silent stale
-state update. The runner asserts zero cross-gap state updates.
+state update. The runner derives `cross_gap_state_updates` from the persisted
+minute rows (`reason=scored_contiguous` with a false predecessor-contiguity
+flag) and rejects any nonzero count.
 
 `quantum_lindblad_minutes.parquet` is the replay surface: all source rows have
 their timestamp, reason code, coupling timestamp/age, full three-by-three

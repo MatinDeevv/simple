@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.3 |
+| **Version** | 1.4 |
 | **Status** | DRAFT — open items assigned, see §7 |
 | **Owner** | Chief Systems Architect |
 | **Date** | 2026-07-18 |
@@ -87,7 +87,7 @@ m_i ẍ_i = −k_i (x_i − x_eq,i) − c_i ẋ_i + m_i Σ_j C_ij · g_j + F_i
 | Mass | `m_i(t)` | dimensionless | `clip((1e-4/sigma_hat_i(t))^2, 0.1, 10)`, where `sigma_hat²` is the 5-day wall-clock EWMA of eligible 60-s squared log returns through `t`; no volume input. | **CLOSED** (OQ-1) | sim-dynamics |
 | Momentum | `p_i(t)` | nats·s⁻¹ | `m_i(t) · v_i(t)` — derived, never independently stored/estimated | **CLOSED** formula; blocked by OQ-1 | — |
 | Equilibrium | `x_eq,i(t)` | nats | Wall-clock EWMA of `x_i(τ≤t)=ln(close_bid_i,τ)`, half-life 86400 s. | **CLOSED** (OQ-2) | sim-dynamics |
-| Spring constant | `k_i(t)` | s⁻² | `k=m*kappa`; `kappa=-b1` from causal no-intercept OLS of `a(t)=b1*d(t-1)+b2*v(t-1)` over trailing 43200 valid two-step rows, min 20000. | **CLOSED** (OQ-3) | sim-dynamics |
+| Spring constant | `k_i(t)` | s⁻² | `k=m*kappa`; `kappa=-b1` from causal no-intercept OLS of `a(t)=b1*d(t-1)+b2*v(t-1)` over trailing 43200 valid two-step rows, min 20000. | **ESTIMATOR DEFINED; identification OPEN** (OQ-3) | sim-dynamics |
 | Damping | `c_i(t)` | s⁻¹ | `c=m*gamma`; `gamma=-b2` from the OQ-3 causal regression. It is a return-decay proxy, not spread or microstructure friction (HC-1). | **CLOSED** (OQ-4) | sim-dynamics |
 | Forcing | `F_i(t)` | nats·s⁻² | Estimation: `F=m[a+kappa*d(t-1)+gamma*v(t-1)]`. Simulation structural spec: `F=m*sigma_eps*sqrt(s(how))*eta`, causal 5-day `sigma_eps²`, strictly-prior seasonal `s`, and finite-variance Student-t `eta` with `nu_sim=max(nu_fit,2.1)`. Learned residual remains OQ-5b. | **CLOSED** (OQ-5a); **OPEN** (OQ-5b) | sim-dynamics (structural), sim-neural (learned) |
 | Coupling row | `C_i·(t)` | s⁻² | Row `i` of daily causal specific-acceleration `C(t)`; `C_ii=0`, directional rows allowed. `g_j(t)=x_j(t)-x_j(t-60 s)=60s·v_j(t)`. Physical coupling force is `m_i Σ_j C_ij g_j`. See §6. | **CLOSED** (OQ-6, OQ-7) | sim-coupling |
@@ -156,7 +156,7 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 | Output | `x̂_i(t+Δt), v̂_i(t+Δt)` for all i |
 | dt | Nominal **60 s** |
 | Gap handling | **CLOSED** (OQ-8): on arrival of a bar with observed `Δt≠60 s`, take no large step; reset `x_hat=x_observed`, `v_hat=0`, log the event, and resume only on a later contiguous 60-s bar. |
-| Scheme + stability | **CLOSED** (OQ-9): semi-implicit Euler with damping implicit. Test the 6x6 amplification spectral radius for every causal configuration. Preserve raw signed `kappa=k/m`, but simulate with logged `kappa_sim=max(kappa,0)`; guarded 60-s `rho≤1+1e-10`, minimum stable-dt lower bound 179.088 s on the accepted three-pair slice. See `docs/integrator.md`. |
+| Scheme + stability | **REOPENED** (OQ-9/D-023): semi-implicit Euler with damping implicit. Directional coupling is non-normal, so require spectral radius, singular value, finite-horizon power growth, eigenvector conditioning, and sampled timestep segments. `kappa_sim=max(kappa,0)` is a logged model projection, not proof that the signed harmonic model is accepted. See `docs/integrator.md`. |
 | Live-mode caveat | At time `t` the arrival time of the next bar is unknown (missing minutes are not forecastable). Integrator must not require future `Δt` knowledge beyond the nominal 60 s step. |
 
 ---
@@ -167,18 +167,19 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 |---|---|---|---|
 | OQ-1 | **RESOLVED 2026-07-18** (D-008): inverse causal realized-volatility mass; see `docs/dynamics.md` | sim-dynamics | unblocks `p`, `F` magnitude, OQ-9 range analysis |
 | OQ-2 | **RESOLVED 2026-07-18** (D-009): 24-h wall-clock causal EWMA; see `docs/dynamics.md` | sim-dynamics | unblocks spring displacement and `F` residual |
-| OQ-3 | **RESOLVED 2026-07-18** (D-010): daily-sampled causal rolling OLS `k=m*kappa`; see `docs/dynamics.md` | sim-dynamics | provides OQ-9 range input and `F` residual |
+| OQ-3 | **REOPENED 2026-07-18** (D-022): signed-curvature estimator exists, but frequent negative `kappa` rejects harmonic restoring-force identification in those regimes; define and validate bounded nonlinear/regime/uncertainty alternatives without holdout selection | sim-dynamics | blocks physical interpretation and acceptance of the classical restoring-force simulator |
 | OQ-4 | **RESOLVED 2026-07-18** (D-011): causal return-decay proxy `c=m*gamma`, explicitly not spread friction; see `docs/dynamics.md` | sim-dynamics | provides `F` residual and OQ-9 range input |
 | OQ-5a | **RESOLVED 2026-07-18** (D-012): residual-derived, heteroskedastic finite-variance Student-t structural forcing; see `docs/dynamics.md` | sim-dynamics | structural simulation runs; OQ-5b remains open |
 | OQ-5b | Learned residual/controller contract for `F̂` (interface, train/test split honoring §5 lookahead rule) | sim-neural | simulation runs, backtests |
 | OQ-6 | **RESOLVED 2026-07-18** (D-013): daily causal identity-free coupling field; see `docs/coupling.md` | sim-coupling | unblocks step 7–8 and cross-asset simulation |
 | OQ-7 | **RESOLVED 2026-07-18** (D-014): invertible residual basis enforces all three arithmetic identities; see `docs/coupling.md` | sim-coupling | validates coupling claims against arithmetic leakage |
-| OQ-8 | **RESOLVED 2026-07-18** (D-016): causal reset-on-arrival for every non-60-s interval; see `docs/integrator.md` | sim-integrator | closed for the accepted three-pair slice |
-| OQ-9 | **RESOLVED 2026-07-18** (D-017): guarded semi-implicit Euler with per-configuration spectral-radius test; see `docs/integrator.md` | sim-integrator | closed for the accepted three-pair slice; no 10-pair claim |
+| OQ-8 | **RESOLVED 2026-07-18** (D-016): causal reset-on-arrival for every non-60-s interval; see `docs/integrator.md` | sim-integrator | closed for the numerically safe three-pair replay |
+| OQ-9 | **REOPENED 2026-07-18** (D-023): integrator now records non-normal transient diagnostics and avoids monotonic timestep bisection, but only numerical safety is established; see `docs/integrator.md` | sim-integrator | blocks acceptance of the three-pair harmonic simulator until transient/OOS/model-identification gates are defined |
 | OQ-10 | Volume normalization across pairs/years (broker-relative units) — canonical normalized volume field spec | sim-datapipe | optional future feature; no longer blocks OQ-1 |
 | OQ-11 | ~~Ingestion spec~~ **RESOLVED 2026-07-17** (D-007): see `docs/datapipe.md` — pipeline v1.0.0, canonical zstd parquet in `data_canonical/` + `manifest.json` content hashes | sim-datapipe | — |
 | OQ-12 | Adversarial validation plan: lookahead-leak tests (§5 rule), triangle-identity leak test (§6), residual-`F` sanity bounds | sim-redteam | v1 sign-off |
-| OQ-13 | Experimental quantum-software representations: density filter, qutrit trajectories/tomography, ten-qutrit MPS/TEBD, ten-qubit kernel/reservoir, and Aer synthetic-noise calibration; never a claim that FX is physically quantum; see `docs/quantum-frontier.md` and `docs/quantum-redteam.md` | Chief Systems Architect | noncanonical and rejected for promotion: every executed predictive representation loses to a required baseline or fails convergence; Aer is local noise simulation only; any further work requires untouched-holdout matched-classical evidence and red-team clearance |
+| OQ-13 | **FROZEN** experimental quantum-software representations: density filter, qutrit trajectories/tomography, ten-qutrit MPS/TEBD, ten-qubit kernel/reservoir, and Aer synthetic-noise calibration; never a claim that FX is physically quantum; see `docs/quantum-frontier.md` and `docs/quantum-redteam.md` | Chief Systems Architect | noncanonical negative-results archive: every executed predictive representation loses to a required baseline or fails convergence; no new quantum model until shared target/classical/OOS gates pass |
+| OQ-14 | Shared causal target and scoring contract: volatility-neutralized surprise/ranking and alternative distributional targets; fixed pair order, gap policy, baselines, outer folds, and block-bootstrap comparison | Chief Systems Architect | blocks any predictive model promotion, including a quantum-branch revisit |
 
 ---
 
@@ -195,7 +196,7 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 | D-007 | 2026-07-17 | OQ-11 resolved: `pipeline/ingest.py` v1.0.0 (spec `docs/datapipe.md`). Canonical stream = per-pair zstd parquet in `data_canonical/` + `manifest.json` (source SHA256, `fxsim-canonical-v1` data content hash, counts). Idempotency verified across two runs; 37.1M rows, 0 dups, 0 OHLC violations. Step-0 input for all agents is now `data_canonical/`, never raw CSVs. Note for OQ-8/OQ-10 owners: wall-clock minute coverage ~70.9% (weekends ~28.6%; intra-session ~99%); USDCNH outlier 68.6%. |
 | D-008 | 2026-07-18 | OQ-1 resolved from `docs/dynamics.md`: mass is clipped inverse causal realized volatility (`1e-4` reference 1-min scale, 5-day wall-clock EWMA), not raw or normalized broker volume. |
 | D-009 | 2026-07-18 | OQ-2 resolved from `docs/dynamics.md`: equilibrium is the 24-hour wall-clock causal EWMA of BID log price. |
-| D-010 | 2026-07-18 | OQ-3 resolved from `docs/dynamics.md`: `k=m*kappa` from daily-sampled causal rolling no-intercept OLS; accepted EURUSD/USDJPY/USDCNH range outputs recorded. |
+| D-010 | 2026-07-18 | OQ-3 estimator definition recorded from `docs/dynamics.md`: `k=m*kappa` from daily-sampled causal rolling no-intercept OLS; EURUSD/USDJPY/USDCNH range outputs recorded. D-022 later reopened model identification. |
 | D-011 | 2026-07-18 | OQ-4 resolved from `docs/dynamics.md`: `c=m*gamma` is a causal return-decay proxy only. HC-1 remains binding: no spread/microstructure damping claim is made. |
 | D-012 | 2026-07-18 | OQ-5a resolved from `docs/dynamics.md`: residual forcing has causal scale and seasonal modulation, with an explicit `nu>=2.1` simulation floor for finite Student-t variance. OQ-5b is not resolved. |
 | D-013 | 2026-07-18 | OQ-6 resolved from `docs/coupling.md`: `g_j=x_j(t)-x_j(t-60s)` and daily causal 10x10 directional C matrices are produced from trailing valid synchronous samples. |
@@ -207,3 +208,6 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 | D-019 | 2026-07-18 | Quantum red-team result recorded. The density filter now has complete-instrument, gap-safe, minute-replay controls; the independent trajectory unraveling is numerically valid. Both fail their baseline/OOS diagnostic gates, so OQ-13 remains isolated and is not authorised to scale, control the simulator, or enter a trading path. |
 | D-020 | 2026-07-18 | Explicit complexity stress test recorded. Ten-qutrit MPS/TEBD, exact ten-qubit fidelity-kernel, ten-qubit data-reupload reservoir, and qutrit process tomography were added as isolated artifacts. Tomography/numerical checks validate software mathematics only; all predictive branches remain rejected, with MPS additionally failing its truncation-convergence threshold. No canonical state, controller, or trading permission changes. |
 | D-021 | 2026-07-18 | Isolated Qiskit Aer environment added for a declared synthetic ten-qubit density-matrix noise calibration. It reports ideal-versus-noisy observables only; no provider credentials, backend calibration, hardware job, forecasting target, or promotion permission was added. |
+| D-022 | 2026-07-18 | OQ-3 reopened. The executed replay projects negative curvature in 2,565 of 3,850 configurations and 153,863 of 250,000 arrivals. This is a harmonic-model identification failure signal, not a numerical fix; no nonlinear potential has been selected. |
+| D-023 | 2026-07-18 | OQ-9 reopened. Resume now has explicit `state_index`/`next_arrival_index` semantics and split-vs-resumed regression coverage. Directional-coupling stability now logs balanced-coordinate singular value, 60-step transient growth, eigenvector conditioning, sampled unit-circle resolvent sensitivity, and non-monotonic sampled dt segments; spectral radius alone is no longer an acceptance proof. |
+| D-024 | 2026-07-18 | Pair order and 60-second gap semantics centralized in `pipeline/contracts.py`. Ten-pair kernel, MPS, reservoir, and Aer branches load the manifest order; the quantum archive is frozen and OQ-14 is the required shared scoring gate before any predictive escalation. |
