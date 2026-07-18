@@ -1,0 +1,35 @@
+{
+  "schema_version": "fxsim-research-run-manifest-v1",
+  "title": "research run manifest (pipeline/run_manifest.py)",
+  "type": "object",
+  "required": [
+    "run_id", "created_at_utc", "git_commit", "git_status", "dirty_worktree",
+    "python_version", "platform", "dependency_versions", "configuration_sha256",
+    "source_file_sha256", "input_artifact_sha256", "output_artifact_sha256",
+    "random_seeds", "frozen_contract_version", "holdout_status",
+    "required_tests_passed", "promotion_eligible", "promotion_blockers",
+    "manifest_sha256"
+  ],
+  "properties": {
+    "run_id": {"type": "string"},
+    "created_at_utc": {"type": "string"},
+    "git_commit": {"type": ["string", "null"]},
+    "git_status": {"type": "string", "enum": ["clean", "dirty", "unavailable"]},
+    "dirty_worktree": {"type": ["boolean", "null"]},
+    "python_version": {"type": "string"},
+    "platform": {"type": "string"},
+    "dependency_versions": {"type": "object"},
+    "configuration_sha256": {"type": "string"},
+    "source_file_sha256": {"type": "object"},
+    "input_artifact_sha256": {"type": "object"},
+    "output_artifact_sha256": {"type": "object"},
+    "random_seeds": {"type": "object"},
+    "frozen_contract_version": {"type": "string"},
+    "holdout_status": {"type": "string", "enum": ["not_used", "clean_holdout", "burned_acknowledged"]},
+    "required_tests_passed": {"type": "boolean"},
+    "promotion_eligible": {"type": "boolean"},
+    "promotion_blockers": {"type": "array", "items": {"type": "string"}},
+    "manifest_sha256": {"type": "string"}
+  },
+  "additionalProperties": false
+}

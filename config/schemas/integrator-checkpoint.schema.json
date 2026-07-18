@@ -1,0 +1,20 @@
+{
+  "schema_version": "fxsim-integrator-checkpoint-v1",
+  "title": "simulate_integrator.py checkpoint file",
+  "type": "object",
+  "required": [
+    "version", "pair_scope", "state_index", "next_arrival_index",
+    "state_timestamp", "x_hat", "v_hat", "restore_rule"
+  ],
+  "properties": {
+    "version": {"type": "string"},
+    "pair_scope": {"type": "array", "items": {"type": "string"}},
+    "state_index": {"type": "integer"},
+    "next_arrival_index": {"type": "integer"},
+    "state_timestamp": {"type": "string"},
+    "x_hat": {"type": "array", "items": {"type": "number"}},
+    "v_hat": {"type": "array", "items": {"type": "number"}},
+    "restore_rule": {"type": "string"}
+  },
+  "additionalProperties": false
+}

@@ -1,37 +1,216 @@
-name: numerical-contracts
+name: repository-verification
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_extended_checks:
+        description: "Run slower property/stress/artifact-validation checks"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHONHASHSEED: "0"
+  EXTENDED_CHECKS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_extended_checks || 'false' }}
 
 jobs:
-  core:
+  # Contract/config sanity + byte-compile. Fails fast, no generated data,
+  # no data_canonical/data_derived, no network beyond dependency install.
+  core-contracts:
+    name: core-contracts
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements-core.txt
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-core.txt
-      - run: python -m pytest tests -q
-      - run: python pipeline/simulate_integrator.py --self-check
-      - run: python pipeline/quantum_lindblad.py --self-check
-      - run: python pipeline/quantum_trajectories.py --self-check
-      - run: python pipeline/quantum_process_tomography.py --self-check
-      - run: python pipeline/quantum_mps.py --self-check
-      - run: python pipeline/quantum_kernel.py --self-check
-      - run: python pipeline/quantum_reservoir.py --self-check
-      - run: python pipeline/stat_arb.py --self-check
-      - run: python pipeline/legal_event.py --self-check
+      - name: byte-compile pipeline, tests, scripts
+        run: python -m compileall -q pipeline tests scripts
+      - name: shared instrument/timestamp contract tests
+        run: |
+          mkdir -p artifacts
+          python -m pytest tests/test_contracts.py -q --junitxml=artifacts/core-contracts.xml
+      - name: upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-contracts-results
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: ignore
 
-  aer:
+  # Full pytest suite. Must pass from a clean checkout with only tracked
+  # files and requirements-core.txt installed.
+  core-tests:
+    name: core-tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements-core.txt
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-core.txt
+      - name: pytest (full suite)
+        run: |
+          mkdir -p artifacts
+          python -m pytest tests -q --junitxml=artifacts/core-tests.xml
+      - name: upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-tests-results
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # Each research module's own --self-check contract. Deterministic
+  # synthetic inputs only; never touches data_canonical/data_derived.
+  research-self-checks:
+    name: research-self-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements-core.txt
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-core.txt
+      - name: simulate_integrator self-check
+        run: |
+          mkdir -p artifacts
+          python pipeline/simulate_integrator.py --self-check | tee artifacts/simulate_integrator_self_check.json
+      - name: stat_arb self-check
+        run: python pipeline/stat_arb.py --self-check | tee artifacts/stat_arb_self_check.json
+      - name: legal_event self-check
+        run: python pipeline/legal_event.py --self-check | tee artifacts/legal_event_self_check.json
+      - name: upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-self-checks-results
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # Classical numpy-only quantum-archive branch self-checks (kernel,
+  # reservoir, MPS, trajectories, tomography, Lindblad). No qiskit
+  # dependency; this is the frozen negative-results archive, not a live
+  # quantum-hardware path (see docs/quantum-frontier.md, OQ-13).
+  quantum-archive-checks:
+    name: quantum-archive-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements-core.txt
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-core.txt
+      - name: quantum archive self-checks
+        run: |
+          mkdir -p artifacts
+          python pipeline/quantum_lindblad.py --self-check | tee artifacts/quantum_lindblad_self_check.json
+          python pipeline/quantum_trajectories.py --self-check | tee artifacts/quantum_trajectories_self_check.json
+          python pipeline/quantum_process_tomography.py --self-check | tee artifacts/quantum_process_tomography_self_check.json
+          python pipeline/quantum_mps.py --self-check | tee artifacts/quantum_mps_self_check.json
+          python pipeline/quantum_kernel.py --self-check | tee artifacts/quantum_kernel_self_check.json
+          python pipeline/quantum_reservoir.py --self-check | tee artifacts/quantum_reservoir_self_check.json
+      - name: upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quantum-archive-results
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # Isolated pinned-qiskit environment. Kept as its own job with its own
+  # dependency set (requirements-quantum.txt) so a core-job failure never
+  # blocks on qiskit/qiskit-aer install, and vice versa.
+  quantum-aer-checks:
+    name: quantum-aer-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements-quantum.txt
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-quantum.txt
-      - run: python pipeline/quantum_aer_noise.py --self-check
+      - name: quantum_aer_noise self-check
+        run: |
+          mkdir -p artifacts
+          python pipeline/quantum_aer_noise.py --self-check | tee artifacts/quantum_aer_noise_self_check.json
+      - name: upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quantum-aer-results
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # Reproducibility/contract audit: clean-checkout imports, local
+  # verification script, duplicate-pair-order and clean-import tests.
+  # Extended (slower) property/stress checks run only on manual dispatch
+  # with run_extended_checks=true.
+  repository-audit:
+    name: repository-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements-core.txt
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-core.txt
+      - name: local repository verification
+        run: python scripts/verify_repository.py
+      - name: audit tests (clean import, duplicate pair order, evaluation protocol, run manifest, schemas)
+        run: |
+          mkdir -p artifacts
+          python -m pytest tests/test_clean_import.py tests/test_no_duplicate_pair_order.py \
+            tests/test_evaluation_protocol.py tests/test_run_manifest.py tests/test_schema_validation.py \
+            tests/test_reproducibility_contracts.py -q --junitxml=artifacts/repository-audit.xml
+      - name: upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-audit-results
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: ignore

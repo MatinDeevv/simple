@@ -1,0 +1,18 @@
+{
+  "schema_version": "fxsim-frozen-archives-v1",
+  "note": "Registry of research artifacts whose content must never change silently. Entries record a path relative to the repo root and its frozen sha256. These artifacts are gitignored (generated data), so this registry is the only tracked guard against accidental overwrite by a later run. Absence of the file on disk is not a failure (a clean checkout has no data_derived/ at all); a content mismatch is.",
+  "entries": [
+    {
+      "path": "data_derived/stat_arb_outer_2024_summary.json",
+      "sha256": "225798d5ad6b1535805fbf440d28915541488de2d562869c1e7cde62170a8796",
+      "expected_version": "stat-arb-arena-0.1.0",
+      "reason": "burned 2024 outer-fold rejection result (model Brier 0.462652 vs frozen-prior 0.150255); documented in docs/stat-arb.md and decision log D-026. Must remain archived unchanged; 2024 is burned for model selection."
+    },
+    {
+      "path": "data_derived/stat_arb_bounded_latest_summary.json",
+      "sha256": "81f84fa9665a60534c9d6edbc8bcd4e14822546d3ebb7e1b2733832bfdc6a36b",
+      "expected_version": "stat-arb-arena-0.1.0",
+      "reason": "first bounded v0.1 candidate rejection result (model Brier 0.397654 vs frozen-prior 0.150843); documented in docs/stat-arb.md. Must remain archived unchanged."
+    }
+  ]
+}

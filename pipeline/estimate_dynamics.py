@@ -54,6 +54,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from contracts import canonical_pair_order
+
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data_canonical"
 OUT_DIR = ROOT / "data_derived"
@@ -77,8 +79,7 @@ NU_SIM_MIN = 2.1                 # ensure simulated Student-t has finite varianc
 ACF_LAGS = (1, 2, 3, 5, 10, 30)
 PCTL = (5, 25, 50, 75, 95)
 
-PAIRS_ALL = ["EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD",
-             "USDCNH", "USDCHF", "EURGBP", "EURJPY", "GBPJPY"]
+PAIRS_ALL = list(canonical_pair_order(ROOT))
 PAIRS_DEFAULT = ["EURUSD", "USDJPY", "USDCNH"]
 
 

@@ -28,6 +28,9 @@ data_events/
 *.log
 download_log.txt
 
+# CI/local verification artifacts
+/artifacts/
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
