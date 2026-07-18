@@ -26,7 +26,7 @@ env:
 
 jobs:
   # Contract/config sanity + byte-compile. Fails fast, no generated data,
-  # no data_canonical/data_derived, no network beyond dependency install.
+  # no generated data, no network beyond dependency install.
   core-contracts:
     name: core-contracts
     runs-on: ubuntu-latest
@@ -40,8 +40,8 @@ jobs:
           cache-dependency-path: requirements-core.txt
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-core.txt
-      - name: byte-compile pipeline, tests, scripts
-        run: python -m compileall -q pipeline tests scripts
+      - name: byte-compile application, research, and tests
+        run: python -m compileall -q app research tests
       - name: shared instrument/timestamp contract tests
         run: |
           mkdir -p artifacts
@@ -84,7 +84,7 @@ jobs:
           if-no-files-found: ignore
 
   # Each research module's own --self-check contract. Deterministic
-  # synthetic inputs only; never touches data_canonical/data_derived.
+  # synthetic inputs only; never touches generated datasets.
   research-self-checks:
     name: research-self-checks
     runs-on: ubuntu-latest
@@ -101,11 +101,11 @@ jobs:
       - name: simulate_integrator self-check
         run: |
           mkdir -p artifacts
-          python pipeline/simulate_integrator.py --self-check | tee artifacts/simulate_integrator_self_check.json
+          python -m fxresearch.models.classical.simulate_integrator --self-check | tee artifacts/simulate_integrator_self_check.json
       - name: stat_arb self-check
-        run: python pipeline/stat_arb.py --self-check | tee artifacts/stat_arb_self_check.json
+        run: python -m fxresearch.models.statistical.stat_arb --self-check | tee artifacts/stat_arb_self_check.json
       - name: legal_event self-check
-        run: python pipeline/legal_event.py --self-check | tee artifacts/legal_event_self_check.json
+        run: python -m fxresearch.models.events.legal_event --self-check | tee artifacts/legal_event_self_check.json
       - name: upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -135,12 +135,12 @@ jobs:
       - name: quantum archive self-checks
         run: |
           mkdir -p artifacts
-          python pipeline/quantum_lindblad.py --self-check | tee artifacts/quantum_lindblad_self_check.json
-          python pipeline/quantum_trajectories.py --self-check | tee artifacts/quantum_trajectories_self_check.json
-          python pipeline/quantum_process_tomography.py --self-check | tee artifacts/quantum_process_tomography_self_check.json
-          python pipeline/quantum_mps.py --self-check | tee artifacts/quantum_mps_self_check.json
-          python pipeline/quantum_kernel.py --self-check | tee artifacts/quantum_kernel_self_check.json
-          python pipeline/quantum_reservoir.py --self-check | tee artifacts/quantum_reservoir_self_check.json
+          python -m research.quantum.quantum_lindblad --self-check | tee artifacts/quantum_lindblad_self_check.json
+          python -m research.quantum.quantum_trajectories --self-check | tee artifacts/quantum_trajectories_self_check.json
+          python -m research.quantum.quantum_process_tomography --self-check | tee artifacts/quantum_process_tomography_self_check.json
+          python -m research.quantum.quantum_mps --self-check | tee artifacts/quantum_mps_self_check.json
+          python -m research.quantum.quantum_kernel --self-check | tee artifacts/quantum_kernel_self_check.json
+          python -m research.quantum.quantum_reservoir --self-check | tee artifacts/quantum_reservoir_self_check.json
       - name: upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -169,7 +169,7 @@ jobs:
       - name: quantum_aer_noise self-check
         run: |
           mkdir -p artifacts
-          python pipeline/quantum_aer_noise.py --self-check | tee artifacts/quantum_aer_noise_self_check.json
+          python -m research.quantum.quantum_aer_noise --self-check | tee artifacts/quantum_aer_noise_self_check.json
       - name: upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -199,7 +199,7 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-core.txt
       - name: local repository verification
-        run: python scripts/verify_repository.py
+        run: python -m fxresearch.tools.verify_repository
       - name: audit tests (clean import, duplicate pair order, evaluation protocol, run manifest, schemas)
         run: |
           mkdir -p artifacts

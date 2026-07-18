@@ -1,4 +1,4 @@
-# FX Dynamics Research Simulator
+﻿# FX Dynamics Research Simulator
 
 This repository is a causality-first simulator for ten Dukascopy one-minute FX
 BID-bar series. It is not a trading system and makes no profitability,
@@ -49,8 +49,8 @@ CI runs the test suite and numerical self-checks on every push and pull request.
 
 ## Canonical contracts
 
-- `config/instruments.json` is the tracked, load-bearing instrument order.
-- Ingestion writes that order into `data_canonical/manifest.json`; generated
+- `fxresearch/config/instruments.json` is the tracked, load-bearing instrument order.
+- Ingestion writes that order into `data/canonical/manifest.json`; generated
   manifests must validate against the tracked configuration.
 - A state update requires an observed contiguous 60-second predecessor.
 - The first bar after a gap resets state and EWMA; it may not form a return from

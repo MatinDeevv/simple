@@ -1,4 +1,4 @@
-# Quantum Branch Red-Team Decision
+﻿# Quantum Branch Red-Team Decision
 
 ## Decision: reject promotion; permit only isolated numerical research
 
@@ -26,9 +26,9 @@ Both numerical implementations pass the relevant trace, Hermiticity,
 positivity, and channel/instrument checks. That is necessary numerical hygiene;
 it is not empirical support for forecasting or market ontology.
 
-- Direct qutrit filter: `pipeline/quantum_lindblad.py`; its 250,000-row replay
+- Direct qutrit filter: `research/quantum/quantum_lindblad.py`; its 250,000-row replay
   has zero cross-gap state updates but fails causal baseline comparison.
-- Monte Carlo wavefunction qutrit: `pipeline/quantum_trajectories.py`; its
+- Monte Carlo wavefunction qutrit: `research/quantum/quantum_trajectories.py`; its
   seed replay and exact-channel checks pass, but it loses OOS to frozen
   constant/prior probability baselines.
 

@@ -17,11 +17,14 @@ venv/
 env/
 .env
 
-# Data files
-dukascopy_data/
-data_canonical/
-data_derived/
-data_events/
+# Generated data.  Git keeps directory sentinels only; full datasets belong
+# in local storage during development and object storage in deployed research.
+/data/raw/*
+!/data/raw/.gitkeep
+/data/canonical/*
+!/data/canonical/.gitkeep
+/data/derived/*
+!/data/derived/.gitkeep
 *.zip
 
 # Logs
@@ -29,7 +32,14 @@ data_events/
 download_log.txt
 
 # CI/local verification artifacts
-/artifacts/
+/artifacts/*
+!/artifacts/.gitkeep
+!/artifacts/runs/
+/artifacts/runs/*
+!/artifacts/runs/.gitkeep
+!/artifacts/figures/
+/artifacts/figures/*
+!/artifacts/figures/.gitkeep
 
 # Jupyter
 .ipynb_checkpoints/

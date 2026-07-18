@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-PIPELINE_DIR = Path(__file__).resolve().parents[1] / "pipeline"
-if str(PIPELINE_DIR) not in sys.path:
-    sys.path.insert(0, str(PIPELINE_DIR))
-
-import schema_validate as sv
-import run_manifest as rm
-import simulate_integrator as integrator
+from fxresearch.core import run_manifest as rm
+from fxresearch.core import schema_validate as sv
+from fxresearch.models.classical import simulate_integrator as integrator
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_DIR = ROOT / "config" / "schemas"
+SCHEMA_DIR = ROOT / "fxresearch" / "config" / "schemas"
 ALL_SCHEMAS = sorted(SCHEMA_DIR.glob("*.schema.json"))
 
 

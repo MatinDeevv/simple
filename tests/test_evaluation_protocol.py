@@ -1,16 +1,9 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-PIPELINE_DIR = Path(__file__).resolve().parents[1] / "pipeline"
-if str(PIPELINE_DIR) not in sys.path:
-    sys.path.insert(0, str(PIPELINE_DIR))
-
-import evaluation_protocol as ep
+from fxresearch.evaluation import evaluation_protocol as ep
 
 
 def test_target_interval_is_inclusive_and_rejects_negative_horizon() -> None:

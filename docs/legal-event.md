@@ -1,6 +1,6 @@
-# Legal-Regulatory Causal Event Research Engine
+﻿# Legal-Regulatory Causal Event Research Engine
 
-`pipeline/legal_event.py` is a data-contract-first implementation of the
+`fxresearch/models/events/legal_event.py` is a data-contract-first implementation of the
 legal-regulatory event architecture. It does not infer law from text, provide
 legal advice, predict legal outcomes, construct trades, or execute orders.
 
@@ -11,8 +11,8 @@ data.
 
 ## Required corpus
 
-The runner expects ignored `data_events/legal_events.jsonl` records conforming
-to tracked `config/legal-event-schema.json`. Each source record must include:
+The runner expects ignored `data/raw/events/legal_events.jsonl` records conforming
+to tracked `fxresearch/config/legal-event-schema.json`. Each source record must include:
 
 ```text
 event_id, source_document_id, jurisdiction, authority,
@@ -84,7 +84,7 @@ only on a declared training partition.
 
 ```powershell
 python pipeline\legal_event.py --self-check
-python pipeline\legal_event.py --events data_events\legal_events.jsonl --max-rows 50000
+python pipeline\legal_event.py --events data/raw/events\legal_events.jsonl --max-rows 50000
 ```
 
 The self-check uses an in-memory synthetic document only to prove timestamp,

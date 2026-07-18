@@ -1,6 +1,6 @@
-# Causal FX Residual-Level Research Arena
+﻿# Causal FX Residual-Level Research Arena
 
-`pipeline/stat_arb.py` is a classical, causality-first research arena. It is
+`fxresearch/models/statistical/stat_arb.py` is a classical, causality-first research arena. It is
 not a strategy, backtest, OMS, execution model, market maker, or portfolio
 authorization system. The source is one-minute BID bars only; it has no ask,
 spread, fill, queue, borrow, impact, capacity, contract-notional, or conversion
@@ -167,10 +167,10 @@ not a license to tune on 2024.
 
 ## Artifacts
 
-- `data_derived/stat_arb_*`: immutable v0.1 archive artifacts.
-- `data_derived/stat_arb_v0_2_*_minute.parquet`: causal v0.2 emissions,
+- `data/derived/stat_arb_*`: immutable v0.1 archive artifacts.
+- `data/derived/stat_arb_v0_2_*_minute.parquet`: causal v0.2 emissions,
   frozen-target outcomes, weights, exposures, and diagnostics.
-- `data_derived/stat_arb_v0_2_*_graph.parquet`: active-regime graph edges.
-- `data_derived/stat_arb_v0_2_*_daily.parquet`: diagnostic aggregates only.
-- `data_derived/stat_arb_v0_2_*_summary.json`: target definition, data hashes,
+- `data/derived/stat_arb_v0_2_*_graph.parquet`: active-regime graph edges.
+- `data/derived/stat_arb_v0_2_*_daily.parquet`: diagnostic aggregates only.
+- `data/derived/stat_arb_v0_2_*_summary.json`: target definition, data hashes,
   baselines, bootstrap sensitivity, and non-promotion status.

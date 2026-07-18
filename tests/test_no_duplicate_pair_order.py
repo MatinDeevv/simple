@@ -1,31 +1,23 @@
 """Repository-wide guard: no production module may hardcode its own copy of
 the canonical ten-pair FX instrument order.
 
-``config/instruments.json`` (via ``pipeline/contracts.canonical_pair_order``)
+``fxresearch/config/instruments.json`` (via ``fxresearch/core/contracts.canonical_pair_order``)
 is the single source of truth. This test uses an AST-based scan (see
-``scripts/repo_pair_order_scan.py``) so it tolerates comments, docstrings,
+``fxresearch/tools/repo_pair_order_scan.py``) so it tolerates comments, docstrings,
 individual pair-name references, and explicitly-marked test fixtures (this
 file and ``tests/test_contracts.py`` both define ``EXPECTED_PAIRS`` on
 purpose, to validate the tracked contract end to end), while still catching
 a real drifted duplicate such as the one found and fixed in
-``pipeline/estimate_dynamics.py`` (``PAIRS_ALL`` used to be a second literal
+``fxresearch/models/classical/estimate_dynamics.py`` (``PAIRS_ALL`` used to be a second literal
 copy of the order).
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-PIPELINE_DIR = Path(__file__).resolve().parents[1] / "pipeline"
-if str(PIPELINE_DIR) not in sys.path:
-    sys.path.insert(0, str(PIPELINE_DIR))
-
-from repo_pair_order_scan import find_duplicate_pair_order_definitions  # noqa: E402
-from contracts import canonical_pair_order  # noqa: E402
+from fxresearch.core.contracts import canonical_pair_order
+from fxresearch.tools.repo_pair_order_scan import find_duplicate_pair_order_definitions
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PAIRS = (
@@ -44,8 +36,8 @@ def test_no_production_module_hardcodes_a_duplicate_pair_order() -> None:
 
 
 def test_scanner_detects_an_exact_duplicate(tmp_path: Path) -> None:
-    (tmp_path / "pipeline").mkdir()
-    (tmp_path / "pipeline" / "offender.py").write_text(
+    (tmp_path / "fxresearch").mkdir()
+    (tmp_path / "fxresearch" / "offender.py").write_text(
         "PAIRS = ('EURUSD', 'USDJPY', 'GBPUSD', 'AUDUSD', 'USDCAD', "
         "'USDCNH', 'USDCHF', 'EURGBP', 'EURJPY', 'GBPJPY')\n",
         encoding="utf-8",
@@ -57,9 +49,9 @@ def test_scanner_detects_an_exact_duplicate(tmp_path: Path) -> None:
 
 
 def test_scanner_detects_a_reordered_duplicate(tmp_path: Path) -> None:
-    (tmp_path / "pipeline").mkdir()
+    (tmp_path / "fxresearch").mkdir()
     reordered = tuple(reversed(EXPECTED_PAIRS))
-    (tmp_path / "pipeline" / "offender.py").write_text(
+    (tmp_path / "fxresearch" / "offender.py").write_text(
         f"PAIRS = {reordered!r}\n", encoding="utf-8",
     )
     findings = find_duplicate_pair_order_definitions(tmp_path, EXPECTED_PAIRS)
@@ -68,8 +60,8 @@ def test_scanner_detects_a_reordered_duplicate(tmp_path: Path) -> None:
 
 
 def test_scanner_tolerates_individual_pair_references_and_comments(tmp_path: Path) -> None:
-    (tmp_path / "pipeline").mkdir()
-    (tmp_path / "pipeline" / "fine.py").write_text(
+    (tmp_path / "fxresearch").mkdir()
+    (tmp_path / "fxresearch" / "fine.py").write_text(
         "# canonical order is EURUSD, USDJPY, GBPUSD, AUDUSD, USDCAD, "
         "USDCNH, USDCHF, EURGBP, EURJPY, GBPJPY\n"
         "PRIMARY = 'EURUSD'\n"

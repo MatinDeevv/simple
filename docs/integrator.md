@@ -1,9 +1,9 @@
-# Classical Integrator: Numerical Safety, Not Harmonic-Model Acceptance
+﻿# Classical Integrator: Numerical Safety, Not Harmonic-Model Acceptance
 
 | Item | Current contract |
 |---|---|
 | Owner | sim-integrator |
-| Implementation | `pipeline/simulate_integrator.py`, `integrator-1.2.0` |
+| Implementation | `fxresearch/models/classical/simulate_integrator.py`, `integrator-1.2.0` |
 | Scope | EURUSD, USDJPY, USDCNH only; indices `[0,1,5]` |
 | Status | Gap handling closed; harmonic-curvature identification and non-normal stability acceptance reopened |
 | Non-claim | This is neither a ten-pair simulation nor a validated restoring-force model. |
@@ -103,6 +103,6 @@ python pipeline\simulate_integrator.py --max-steps 250000
 
 The pseudo-energy output remains diagnostic only; damping, moving equilibrium,
 coupling, and resets make this a forced/dissipative system. Outputs are
-`data_derived/integrator_stability.parquet`,
+`data/derived/integrator_stability.parquet`,
 `integrator_replay_daily.parquet`, `integrator_gap_events.parquet`,
 `integrator_summary.json`, and `integrator_checkpoint.json`.

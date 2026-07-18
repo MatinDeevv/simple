@@ -3,8 +3,8 @@ safety property tests.
 
 These are black-box tests against public module APIs only (``run_arrays``,
 ``identity_free_transform``, ``synthetic_input``, ``load_schema``,
-``run_event_study``, ...). They never edit ``pipeline/stat_arb.py`` or
-``pipeline/legal_event.py``, and they intentionally use a different testing
+``run_event_study``, ...). They never edit the production modules directly,
+and they intentionally use a different testing
 strategy (randomized property checks, subprocess/process-boundary
 determinism, explicit input-array-identity checks) than those modules' own
 test suites, so they add independent verification rather than duplicating
@@ -23,13 +23,9 @@ import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PIPELINE_DIR = ROOT / "pipeline"
-if str(PIPELINE_DIR) not in sys.path:
-    sys.path.insert(0, str(PIPELINE_DIR))
-
-import stat_arb
-import legal_event
-import evaluation_protocol as ep
+from fxresearch.evaluation import evaluation_protocol as ep
+from fxresearch.models.events import legal_event
+from fxresearch.models.statistical import stat_arb
 
 
 # --------------------------------------------------------------------------- #
@@ -126,7 +122,7 @@ def test_mutating_prices_after_a_boundary_never_changes_emissions_at_or_before_i
 
 
 _SUBPROCESS_SNIPPET = (
-    "import sys, json; sys.path.insert(0, {pipeline_dir!r}); import stat_arb; "
+    "import sys, json; sys.path.insert(0, {repo_root!r}); from fxresearch.models.statistical import stat_arb; "
     "times, prices = stat_arb.synthetic_input(); "
     "result = stat_arb.run_arrays(times, prices, test_start_index=500, config=stat_arb._fast_config()); "
     "payload = {{'p': result.emissions['p_basket_directional'].round(12).tolist(), "
@@ -142,7 +138,7 @@ def _run_subprocess_arena(cwd: Path, env_overrides: dict[str, str] | None = None
     env.pop("PYTHONHASHSEED", None)
     if env_overrides:
         env.update(env_overrides)
-    code = _SUBPROCESS_SNIPPET.format(pipeline_dir=str(PIPELINE_DIR))
+    code = _SUBPROCESS_SNIPPET.format(repo_root=str(ROOT))
     proc = subprocess.run([sys.executable, "-c", code], cwd=cwd, capture_output=True, text=True,
                           env=env, timeout=120)
     assert proc.returncode == 0, proc.stderr
@@ -194,7 +190,7 @@ def test_run_arrays_rejects_wrong_shaped_prices() -> None:
 
 
 def test_legal_event_load_schema_rejects_unsupported_schema_version(tmp_path: Path) -> None:
-    schema = json.loads((ROOT / "config" / "legal-event-schema.json").read_text(encoding="utf-8"))
+    schema = json.loads((ROOT / "fxresearch" / "config" / "legal-event-schema.json").read_text(encoding="utf-8"))
     schema["schema_version"] = "not-a-real-version"
     broken_path = tmp_path / "broken-schema.json"
     broken_path.write_text(json.dumps(schema), encoding="utf-8")

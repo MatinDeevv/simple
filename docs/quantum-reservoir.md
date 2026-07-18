@@ -1,6 +1,6 @@
-# Ten-qubit quantum reservoir experiment
+﻿# Ten-qubit quantum reservoir experiment
 
-pipeline/quantum_reservoir.py is an isolated **software** experiment. It uses
+research/quantum/quantum_reservoir.py is an isolated **software** experiment. It uses
 valid complex state-vector circuit operations, but it does **not** assert that
 FX prices are a physical quantum system. It does not write canonical state,
 does not generate a trading signal, and is not eligible for promotion from
@@ -64,8 +64,8 @@ modal-class baseline are all frozen before the OOS rows are scored.
 
 ## Commands
 
-    python pipeline/quantum_reservoir.py --self-check
-    python pipeline/quantum_reservoir.py --max-steps 50000
+    python research/quantum/quantum_reservoir.py --self-check
+    python research/quantum/quantum_reservoir.py --max-steps 50000
 
 --max-steps selects the latest bounded canonical window. The default is
 50,000 raw minute rows, keeping the full state-vector experiment practical
@@ -101,13 +101,13 @@ result, not evidence for market quantum ontology or for tradability.
 
 ## Audit artifacts
 
-- data_derived/quantum_reservoir_minute.parquet — every raw row, gap reason,
+- data/derived/quantum_reservoir_minute.parquet â€” every raw row, gap reason,
   causal inputs, 21 observables, target, and OOS-only model probabilities.
-- data_derived/quantum_reservoir_daily.parquet — day-level update and OOS
+- data/derived/quantum_reservoir_daily.parquet â€” day-level update and OOS
   diagnostic aggregates.
-- data_derived/quantum_reservoir_summary.json — split, model configuration,
+- data/derived/quantum_reservoir_summary.json â€” split, model configuration,
   complete readout weights, frozen baselines, hashes, and result.
-- data_derived/quantum_reservoir_validation.json — state norm, observable,
+- data/derived/quantum_reservoir_validation.json â€” state norm, observable,
   gate-orientation, compiled-ring equivalence, and deterministic-seed checks.
 
 The minute artifact intentionally leaves pre-OOS model probabilities empty:

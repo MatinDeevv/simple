@@ -1,4 +1,4 @@
-# Quantum-Trajectory Open-System Experiment
+﻿# Quantum-Trajectory Open-System Experiment
 
 ## Boundary and purpose
 
@@ -86,15 +86,15 @@ of the Lindblad generator, MC reconstruction against the exact density map,
 positive reconstructed density, normalized vectors, and same-seed bitwise
 reproducibility.
 
-    python pipeline/quantum_trajectories.py --self-check
-    python pipeline/quantum_trajectories.py --max-steps 250000 --trajectories 96 --seed 20260718
+    python research/quantum/quantum_trajectories.py --self-check
+    python research/quantum/quantum_trajectories.py --max-steps 250000 --trajectories 96 --seed 20260718
 
 The second command writes the executed results to:
 
-- `data_derived/quantum_trajectories_daily.parquet`
-- `data_derived/quantum_trajectories_minute.parquet`
-- `data_derived/quantum_trajectories_summary.json`
-- `data_derived/quantum_trajectories_validation.json`
+- `data/derived/quantum_trajectories_daily.parquet`
+- `data/derived/quantum_trajectories_minute.parquet`
+- `data/derived/quantum_trajectories_summary.json`
+- `data/derived/quantum_trajectories_validation.json`
 
 The minute artifact is the reproducibility surface: every processed source row
 has timestamps, gap/skip reason, reset flag, raw and standardized causal

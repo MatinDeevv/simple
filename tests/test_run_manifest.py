@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-PIPELINE_DIR = Path(__file__).resolve().parents[1] / "pipeline"
-if str(PIPELINE_DIR) not in sys.path:
-    sys.path.insert(0, str(PIPELINE_DIR))
-
-import run_manifest as rm
+from fxresearch.core import run_manifest as rm
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:

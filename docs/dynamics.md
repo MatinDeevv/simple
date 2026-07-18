@@ -1,12 +1,12 @@
-# Causal Single-Particle Dynamics (OQ-1 to OQ-5a)
+﻿# Causal Single-Particle Dynamics (OQ-1 to OQ-5a)
 
 | Item | Accepted v1 definition |
 |---|---|
 | Owner | sim-dynamics |
-| Canonical input | `data_canonical/<PAIR>.parquet` only; `timestamp, close` |
-| Estimator | `pipeline/estimate_dynamics.py`, `dynamics-est-1.2.0` |
-| Accepted run | `python pipeline/estimate_dynamics.py --pairs EURUSD USDJPY USDCNH` |
-| Outputs | `data_derived/dynamics_params_<PAIR>.parquet`, `data_derived/dynamics_summary.json` |
+| Canonical input | `data/canonical/<PAIR>.parquet` only; `timestamp, close` |
+| Estimator | `fxresearch/models/classical/estimate_dynamics.py`, `dynamics-est-1.2.0` |
+| Accepted run | `python fxresearch/models/classical/estimate_dynamics.py --pairs EURUSD USDJPY USDCNH` |
+| Outputs | `data/derived/dynamics_params_<PAIR>.parquet`, `data/derived/dynamics_summary.json` |
 | Time convention | UTC bar close; nominal `dt=60 s`; log BID price in nats |
 
 The fitted per-pair equation excludes the coupling term, which is owned by `docs/coupling.md`:
@@ -58,4 +58,4 @@ The spring term adds little in-sample incremental uncentered R2 versus the dampi
 
 ## Integrator handoff
 
-The daily streams provide `m, k, c, k*dt^2, c*dt, sigma_eps`, and valid-window count. This range table plus `data_derived/dynamics_summary.json` are OQ-9 inputs. No integrator gap policy, stability conclusion, or learned residual/controller is decided here.
+The daily streams provide `m, k, c, k*dt^2, c*dt, sigma_eps`, and valid-window count. This range table plus `data/derived/dynamics_summary.json` are OQ-9 inputs. No integrator gap policy, stability conclusion, or learned residual/controller is decided here.

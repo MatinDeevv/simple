@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 
-PIPELINE_DIR = Path(__file__).resolve().parents[1] / "pipeline"
-if str(PIPELINE_DIR) not in sys.path:
-    sys.path.insert(0, str(PIPELINE_DIR))
-
-import stat_arb
+from fxresearch.models.statistical import stat_arb
 
 
 FAST_CONFIG = stat_arb.ArenaConfig(
@@ -66,7 +61,7 @@ def test_factor_neutral_weights_are_currency_and_selected_factor_neutral() -> No
     raw_loadings[5, 2] = 1.0
     loadings = transform @ raw_loadings
     incidence, _currencies = stat_arb.currency_incidence()
-    weights = stat_arb.factor_neutral_weights(signal, transform, inverse, loadings, incidence, 2)
+    weights = stat_arb.factor_neutral_weights(signal, transform, inverse, loadings, incidence, 2).weights
     mapped_raw_loadings = inverse @ loadings
     np.testing.assert_allclose(incidence.T @ weights, np.zeros(incidence.shape[1]), atol=1e-12)
     np.testing.assert_allclose(mapped_raw_loadings[:, :2].T @ weights, np.zeros(2), atol=1e-12)
@@ -80,12 +75,15 @@ def test_cycle_and_relative_value_modes_have_distinct_currency_contracts() -> No
     loadings = np.zeros((len(stat_arb.PAIRS), 3))
     incidence, _currencies = stat_arb.currency_incidence()
     cycle = stat_arb.factor_neutral_weights(signal, transform, inverse, loadings, incidence, 0,
-                                             stat_arb.CYCLE_NEUTRAL_MODE)
-    relative = stat_arb.factor_neutral_weights(signal, transform, inverse, loadings, incidence, 0,
-                                                stat_arb.RELATIVE_VALUE_MODE, 0.25)
+                                             stat_arb.CYCLE_NEUTRAL_MODE).weights
+    relative_result = stat_arb.factor_neutral_weights(signal, transform, inverse, loadings, incidence, 0,
+                                                       stat_arb.RELATIVE_VALUE_MODE, 0.25)
+    relative = relative_result.weights
     np.testing.assert_allclose(cycle, np.zeros(len(stat_arb.PAIRS)), atol=1e-12)
     assert np.sum(np.abs(relative)) > 0.0
     assert float(np.max(np.abs(incidence.T @ relative))) <= 0.25 + 1e-12
+    assert relative_result.converged
+    assert relative_result.max_weight_violation <= 1e-8
 
 
 def test_post_construction_probability_and_gate_reject_erased_signal() -> None:
@@ -296,4 +294,7 @@ def test_arena_uses_frozen_level_targets_and_never_promotes_bid_only_data() -> N
     assert result.emissions["holding_horizon_steps"].nunique() == 2
     assert (result.emissions["selected_graph_pressure"] > 0.0).any()
     assert result.summary["components"]["execution_cost_status"].startswith("BLOCKED")
+    primary_gate = result.summary["evaluation"]["primary_three_class_observed_minute_block_bootstrap"]
+    assert primary_gate["exact_replicate_entry_count"] == result.summary["evaluation"]["oos_samples"]
+    assert "log_loss_improvement" in primary_gate["sensitivity"]["32_observed_minutes"]
     assert result.summary["promotion_status"].startswith("REJECTED")

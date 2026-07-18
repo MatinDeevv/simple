@@ -1,17 +1,12 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 
 
-PIPELINE_DIR = Path(__file__).resolve().parents[1] / "pipeline"
-if str(PIPELINE_DIR) not in sys.path:
-    sys.path.insert(0, str(PIPELINE_DIR))
-
-import simulate_integrator as integrator
+from fxresearch.models.classical import simulate_integrator as integrator
 
 
 def synthetic_inputs() -> tuple[np.ndarray, np.ndarray, list[dict[str, np.ndarray]], dict[str, np.ndarray]]:

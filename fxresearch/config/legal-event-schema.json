@@ -1,0 +1,41 @@
+{
+  "schema_version": "fxsim-legal-event-v1",
+  "legal_stages": [
+    "proposal",
+    "consultation",
+    "final_rule",
+    "effective",
+    "enforcement",
+    "court_decision",
+    "appeal"
+  ],
+  "scenarios": [
+    "withdrawn",
+    "enacted",
+    "diluted",
+    "injunction",
+    "appeal_success",
+    "aggressive_enforcement",
+    "loophole"
+  ],
+  "required_event_fields": [
+    "event_id",
+    "source_document_id",
+    "source_content_sha256",
+    "jurisdiction",
+    "authority",
+    "published_at",
+    "known_at",
+    "legal_stage",
+    "assessment_created_at",
+    "assessment_model_version",
+    "assessment_author",
+    "assessment_sha256",
+    "parent_assessment_sha256",
+    "sealed_before_market_data_through",
+    "source_citations",
+    "assessment_evidence_documents",
+    "scenario_probabilities",
+    "pair_exposures"
+  ]
+}

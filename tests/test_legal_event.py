@@ -2,18 +2,13 @@ from __future__ import annotations
 
 import copy
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 
-PIPELINE_DIR = Path(__file__).resolve().parents[1] / "pipeline"
-if str(PIPELINE_DIR) not in sys.path:
-    sys.path.insert(0, str(PIPELINE_DIR))
-
-import legal_event
+from fxresearch.models.events import legal_event
 
 
 def test_event_pressure_respects_recorded_scenario_probabilities_and_pair_exposure() -> None:
@@ -90,7 +85,10 @@ def test_assessment_provenance_is_hashed_sealed_append_only_and_anchorable(tmp_p
     assert ledger[1]["parent_assessment_sha256"] == parent["assessment_sha256"]
     anchor = tmp_path / "anchors" / "ledger.json"
     legal_event.write_ledger_anchor(ledger, anchor, "signed-git-tag:legal-ledger-2026-07-18")
-    assert json.loads(anchor.read_text(encoding="utf-8"))["ledger_root_sha256"] == legal_event.assessment_ledger_root(ledger)
+    anchored = json.loads(anchor.read_text(encoding="utf-8"))
+    assert anchored["ledger_root_sha256"] == legal_event.assessment_ledger_root(ledger)
+    assert anchored["anchor_status"] == "EXTERNAL_REFERENCE_UNVERIFIED"
+    assert legal_event.verify_ledger_anchor(anchor)["anchor_status"] == "EXTERNAL_REFERENCE_UNVERIFIED"
 
 
 def test_future_citation_and_conflicting_duplicate_are_rejected() -> None:
@@ -104,7 +102,7 @@ def test_future_citation_and_conflicting_duplicate_are_rejected() -> None:
     future["assessment_created_at"] = "1970-01-01T00:11:00Z"
     future["sealed_before_market_data_through"] = "1970-01-01T00:11:00Z"
     future["assessment_sha256"] = legal_event.canonical_assessment_hash(future)
-    first["citations"] = [future["source_document_id"]]
+    first["source_citations"] = [future["source_document_id"]]
     with pytest.raises(legal_event.ContractError, match="not known"):
         legal_event.validate_events([first, future], schema)
 
@@ -114,6 +112,28 @@ def test_future_citation_and_conflicting_duplicate_are_rejected() -> None:
     conflict["assessment_sha256"] = legal_event.canonical_assessment_hash(conflict)
     with pytest.raises(legal_event.ContractError, match="conflicting duplicate"):
         legal_event.validate_events([duplicate, conflict], schema)
+
+
+def test_assessment_is_bound_to_source_and_evidence_uses_assessment_clock() -> None:
+    schema = legal_event.load_schema()
+    first = legal_event.synthetic_events()[0]
+    evidence = copy.deepcopy(first)
+    evidence["event_id"] = "synthetic-rule-002"
+    evidence["source_document_id"] = "synthetic-primary-002"
+    evidence["source_content_sha256"] = "b" * 64
+    evidence["published_at"] = "1970-01-01T00:05:00Z"
+    evidence["known_at"] = "1970-01-01T00:05:00Z"
+    evidence["assessment_created_at"] = "1970-01-01T00:06:00Z"
+    evidence["sealed_before_market_data_through"] = "1970-01-01T00:06:00Z"
+    evidence["assessment_evidence_documents"] = [first["source_document_id"]]
+    evidence["assessment_sha256"] = legal_event.canonical_assessment_hash(evidence)
+    ledger = legal_event.validate_events([first, evidence], schema)
+    assert len(ledger) == 2
+
+    rebound = copy.deepcopy(first)
+    rebound["source_document_id"] = "another-source"
+    with pytest.raises(legal_event.ContractError, match="immutable assessment content"):
+        legal_event.validate_events([rebound], schema)
 
 
 def test_gap_crossing_event_window_is_not_scored() -> None:

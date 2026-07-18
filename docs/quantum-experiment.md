@@ -1,4 +1,4 @@
-# Open-Quantum-System FX Experiment
+﻿# Open-Quantum-System FX Experiment
 
 ## Boundary
 
@@ -75,8 +75,8 @@ observable.
 
 Command:
 
-    python pipeline/quantum_lindblad.py --self-check
-    python pipeline/quantum_lindblad.py --max-steps 250000
+    python research/quantum/quantum_lindblad.py --self-check
+    python research/quantum/quantum_lindblad.py --max-steps 250000
 
 | Metric | Result |
 |---|---:|
@@ -105,6 +105,6 @@ classical state filter, constant/prior, and causal volatility baselines; and
 pass gap/regime, leakage, and placebo red-team tests. The shared complexity
 and OOS requirements are defined in `docs/quantum-frontier.md`.
 
-Outputs: `data_derived/quantum_lindblad_daily.parquet`,
-`data_derived/quantum_lindblad_minutes.parquet`, and
-`data_derived/quantum_lindblad_summary.json`.
+Outputs: `data/derived/quantum_lindblad_daily.parquet`,
+`data/derived/quantum_lindblad_minutes.parquet`, and
+`data/derived/quantum_lindblad_summary.json`.

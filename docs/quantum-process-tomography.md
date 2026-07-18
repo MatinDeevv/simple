@@ -1,8 +1,8 @@
-# Quantum Channel Tomography
+﻿# Quantum Channel Tomography
 
 ## Scope
 
-`pipeline/quantum_process_tomography.py` is a numerical-physics audit of the
+`research/quantum/quantum_process_tomography.py` is a numerical-physics audit of the
 qutrit branch. It constructs the **nonselective** channel associated with the
 current causal inputs. This is deliberately different from the conditional,
 normalized likelihood-filter update used for `rho` in
@@ -32,11 +32,11 @@ as the repaired density-filter replay does.
 
 ## Execution
 
-    python pipeline/quantum_process_tomography.py --self-check
-    python pipeline/quantum_process_tomography.py --max-steps 250000 --max-samples 512
+    python research/quantum/quantum_process_tomography.py --self-check
+    python research/quantum/quantum_process_tomography.py --max-steps 250000 --max-samples 512
 
-Outputs are `data_derived/quantum_process_tomography.parquet` and
-`data_derived/quantum_process_tomography_summary.json`.
+Outputs are `data/derived/quantum_process_tomography.parquet` and
+`data/derived/quantum_process_tomography_summary.json`.
 
 ## Interpretation boundary
 

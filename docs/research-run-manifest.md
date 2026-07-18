@@ -1,9 +1,9 @@
-# Research Run Manifest
+﻿# Research Run Manifest
 
-`pipeline/run_manifest.py` produces a self-verifying JSON record of what
+`fxresearch/core/run_manifest.py` produces a self-verifying JSON record of what
 produced a research artifact. It is a general-purpose module usable by any
 pipeline script; nothing currently calls it automatically from
-`stat_arb.py`, `legal_event.py`, or `simulate_integrator.py` — wiring it into
+`stat_arb.py`, `legal_event.py`, or `simulate_integrator.py` â€” wiring it into
 a specific run is a follow-up, not part of this branch.
 
 ## Fields
@@ -36,7 +36,7 @@ a specific run is a follow-up, not part of this branch.
 
 `promotion_eligible` is `True` only if **all** of the following hold:
 
-1. `git_status == "clean"` (not `"dirty"`, and not `"unavailable"` — a
+1. `git_status == "clean"` (not `"dirty"`, and not `"unavailable"` â€” a
    synthetic CI environment with no git binary or no `.git` directory gets
    `git_status: "unavailable"` and is never promotion-eligible, by design).
 2. `holdout_status != "burned_acknowledged"`.
@@ -45,7 +45,7 @@ a specific run is a follow-up, not part of this branch.
 
 This module **never infers success from an artifact's existence.** It does
 not run tests, does not run self-checks, and does not check whether
-`output_artifact_sha256` is non-empty as a promotion criterion — a caller
+`output_artifact_sha256` is non-empty as a promotion criterion â€” a caller
 that wants that must actually run the tests/self-checks and pass the
 resulting boolean into `required_tests_passed` explicitly. A manifest with
 five populated output-artifact hashes and `required_tests_passed=False` is
@@ -56,7 +56,7 @@ still not promotion-eligible.
 `manifest_sha256` covers the canonical JSON (`sort_keys=True,
 separators=(",", ":")`) of every other field. `verify_manifest_integrity(payload)`
 recomputes it and compares. `write_manifest()` refuses to write a payload
-whose hash doesn't match its own contents — so a manifest cannot be silently
+whose hash doesn't match its own contents â€” so a manifest cannot be silently
 hand-edited (e.g., flipping `promotion_eligible` to `True` without redoing
 every gate) and then saved through this module; `tests/test_run_manifest.py`
 has an explicit tampering-detection test for this.
@@ -67,7 +67,7 @@ has an explicit tampering-detection test for this.
   them. That is the caller's responsibility, on purpose: a manifest-writing
   step must not be the thing that also decides tests passed.
 - It does not enforce that `output_artifact_sha256` paths were produced by
-  *this* run rather than a stale file from a previous one — hashing an
+  *this* run rather than a stale file from a previous one â€” hashing an
   existing file only proves the file's current content, not its provenance.
   Pair this with `input_artifact_sha256`/`source_file_sha256` and a fresh
   `output_dir` per run if that guarantee is needed.
