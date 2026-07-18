@@ -1,0 +1,6 @@
+# Isolated simulator tier; do not install this into the base interpreter.
+# Qiskit Aer is used only for local noisy-circuit reproduction experiments.
+qiskit~=2.4.0
+qiskit-aer~=0.17
+pandas
+pyarrow

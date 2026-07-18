@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
+| **Version** | 1.3 |
 | **Status** | DRAFT — open items assigned, see §7 |
 | **Owner** | Chief Systems Architect |
 | **Date** | 2026-07-18 |
@@ -83,7 +83,7 @@ m_i ẍ_i = −k_i (x_i − x_eq,i) − c_i ẋ_i + m_i Σ_j C_ij · g_j + F_i
 | Field | Symbol | Units | Computable definition | Status | Owner |
 |---|---|---|---|---|---|
 | Position | `x_i(t)` | nats | `ln(close_bid_i,t)` | **CLOSED** | — |
-| Velocity | `v_i(t)` | nats·s⁻¹ | `(x_i(t) − x_i(t−1)) / Δt(t)`, backward difference; `Δt` per §4.2 | **CLOSED** for Δt=60 s; semantics across gaps **OPEN** (OQ-8) | sim-integrator (gap case) |
+| Velocity | `v_i(t)` | nats·s⁻¹ | `(x_i(t) − x_i(t−1)) / Δt(t)` for an observed 60-s predecessor. When an arriving bar reveals `Δt≠60 s`, simulator state resets to observed `x` and `v=0`; no gap-crossing velocity is invented. | **CLOSED** (OQ-8) | sim-integrator |
 | Mass | `m_i(t)` | dimensionless | `clip((1e-4/sigma_hat_i(t))^2, 0.1, 10)`, where `sigma_hat²` is the 5-day wall-clock EWMA of eligible 60-s squared log returns through `t`; no volume input. | **CLOSED** (OQ-1) | sim-dynamics |
 | Momentum | `p_i(t)` | nats·s⁻¹ | `m_i(t) · v_i(t)` — derived, never independently stored/estimated | **CLOSED** formula; blocked by OQ-1 | — |
 | Equilibrium | `x_eq,i(t)` | nats | Wall-clock EWMA of `x_i(τ≤t)=ln(close_bid_i,τ)`, half-life 86400 s. | **CLOSED** (OQ-2) | sim-dynamics |
@@ -114,7 +114,7 @@ Derived quantities used only in estimation (never part of handed-off state): acc
 | 1 | Read bar `t` for all instruments present at `t` | canonical stream | close known only at bar close |
 | 2 | `Δt_i(t)`, `g_gap,i(t)` | timestamps ≤ t | — |
 | 3 | `x_i(t) = ln(close_bid_i,t)` | bar t | — |
-| 4 | `v_i(t)` backward difference | `x(t), x(t−1), Δt(t)` | gap case OPEN (OQ-8) |
+| 4 | `v_i(t)` backward difference | `x(t), x(t−1), Δt(t)` | for `Δt≠60`, causal reset to observed position and zero velocity; no large step |
 | 5 | Parameter updates: `m_i(t), x_eq,i(t), k_i(t), c_i(t)` | history ≤ t | closed causal definitions in `docs/dynamics.md` |
 | 6 | `p_i(t) = m_i(t) · v_i(t)` | steps 4, 5 | — |
 | 7 | `C(t)` update | history ≤ t, all instruments | daily causal estimate in identity-free basis; §6 constraints apply |
@@ -155,8 +155,8 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 | Parameters during step | Zero-order hold at time-t values |
 | Output | `x̂_i(t+Δt), v̂_i(t+Δt)` for all i |
 | dt | Nominal **60 s** |
-| Gap handling | **OPEN** (OQ-8), sim-integrator: missing minutes and ~48 h weekend gaps — one large step vs. sub-stepping vs. state re-initialization at session open. Not decided here. |
-| Scheme + stability | **OPEN** (OQ-9), sim-integrator: explicit Euler vs. semi-implicit Euler vs. Verlet; stability bounds as function of `k·Δt²`, `c·Δt`; must state max stable `Δt` given fitted parameter ranges |
+| Gap handling | **CLOSED** (OQ-8): on arrival of a bar with observed `Δt≠60 s`, take no large step; reset `x_hat=x_observed`, `v_hat=0`, log the event, and resume only on a later contiguous 60-s bar. |
+| Scheme + stability | **CLOSED** (OQ-9): semi-implicit Euler with damping implicit. Test the 6x6 amplification spectral radius for every causal configuration. Preserve raw signed `kappa=k/m`, but simulate with logged `kappa_sim=max(kappa,0)`; guarded 60-s `rho≤1+1e-10`, minimum stable-dt lower bound 179.088 s on the accepted three-pair slice. See `docs/integrator.md`. |
 | Live-mode caveat | At time `t` the arrival time of the next bar is unknown (missing minutes are not forecastable). Integrator must not require future `Δt` knowledge beyond the nominal 60 s step. |
 
 ---
@@ -173,11 +173,12 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 | OQ-5b | Learned residual/controller contract for `F̂` (interface, train/test split honoring §5 lookahead rule) | sim-neural | simulation runs, backtests |
 | OQ-6 | **RESOLVED 2026-07-18** (D-013): daily causal identity-free coupling field; see `docs/coupling.md` | sim-coupling | unblocks step 7–8 and cross-asset simulation |
 | OQ-7 | **RESOLVED 2026-07-18** (D-014): invertible residual basis enforces all three arithmetic identities; see `docs/coupling.md` | sim-coupling | validates coupling claims against arithmetic leakage |
-| OQ-8 | Δt/gap policy: missing minutes, 48 h weekends — step vs. sub-step vs. re-init; velocity semantics across gaps | sim-integrator | §7 contract, `v` at session open |
-| OQ-9 | Integration scheme + stability bounds vs. fitted `k, c` ranges | sim-integrator | §7 contract |
+| OQ-8 | **RESOLVED 2026-07-18** (D-016): causal reset-on-arrival for every non-60-s interval; see `docs/integrator.md` | sim-integrator | closed for the accepted three-pair slice |
+| OQ-9 | **RESOLVED 2026-07-18** (D-017): guarded semi-implicit Euler with per-configuration spectral-radius test; see `docs/integrator.md` | sim-integrator | closed for the accepted three-pair slice; no 10-pair claim |
 | OQ-10 | Volume normalization across pairs/years (broker-relative units) — canonical normalized volume field spec | sim-datapipe | optional future feature; no longer blocks OQ-1 |
 | OQ-11 | ~~Ingestion spec~~ **RESOLVED 2026-07-17** (D-007): see `docs/datapipe.md` — pipeline v1.0.0, canonical zstd parquet in `data_canonical/` + `manifest.json` content hashes | sim-datapipe | — |
 | OQ-12 | Adversarial validation plan: lookahead-leak tests (§5 rule), triangle-identity leak test (§6), residual-`F` sanity bounds | sim-redteam | v1 sign-off |
+| OQ-13 | Experimental quantum-software representations: density filter, qutrit trajectories/tomography, ten-qutrit MPS/TEBD, ten-qubit kernel/reservoir, and Aer synthetic-noise calibration; never a claim that FX is physically quantum; see `docs/quantum-frontier.md` and `docs/quantum-redteam.md` | Chief Systems Architect | noncanonical and rejected for promotion: every executed predictive representation loses to a required baseline or fails convergence; Aer is local noise simulation only; any further work requires untouched-holdout matched-classical evidence and red-team clearance |
 
 ---
 
@@ -200,3 +201,9 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 | D-013 | 2026-07-18 | OQ-6 resolved from `docs/coupling.md`: `g_j=x_j(t)-x_j(t-60s)` and daily causal 10x10 directional C matrices are produced from trailing valid synchronous samples. |
 | D-014 | 2026-07-18 | OQ-7 resolved from `docs/coupling.md`: EURGBP, EURJPY, and GBPJPY are transformed to arithmetic-residual channels before fitting. Executed diagnostics show the expected pre-to-post reduction. |
 | D-015 | 2026-07-18 | Coupling-unit contract reconciled: the fitted `C` maps `g` to specific acceleration. The governing equation and residual now multiply the coupling acceleration by `m`; this matches the executed estimator units. |
+| D-016 | 2026-07-18 | OQ-8 resolved from `docs/integrator.md`: when a newly arriving bar exposes a non-60-s interval, no giant step is taken. The simulator resets to observed position with zero velocity and logs the event. |
+| D-017 | 2026-07-18 | OQ-9 resolved from `docs/integrator.md`: semi-implicit Euler is accepted only after causal per-configuration amplification checks. Raw negative curvature remains reported; `kappa_sim=max(kappa,0)` is explicit and logged. The verified scope is EURUSD/USDJPY/USDCNH only. |
+| D-018 | 2026-07-18 | OQ-13 added as an isolated research branch: `docs/quantum-experiment.md` uses a computable qutrit density-matrix filter with unitary, measurement, and Lindblad operations. It is explicitly not evidence of physical quantum FX behavior and does not alter canonical simulation state. |
+| D-019 | 2026-07-18 | Quantum red-team result recorded. The density filter now has complete-instrument, gap-safe, minute-replay controls; the independent trajectory unraveling is numerically valid. Both fail their baseline/OOS diagnostic gates, so OQ-13 remains isolated and is not authorised to scale, control the simulator, or enter a trading path. |
+| D-020 | 2026-07-18 | Explicit complexity stress test recorded. Ten-qutrit MPS/TEBD, exact ten-qubit fidelity-kernel, ten-qubit data-reupload reservoir, and qutrit process tomography were added as isolated artifacts. Tomography/numerical checks validate software mathematics only; all predictive branches remain rejected, with MPS additionally failing its truncation-convergence threshold. No canonical state, controller, or trading permission changes. |
+| D-021 | 2026-07-18 | Isolated Qiskit Aer environment added for a declared synthetic ten-qubit density-matrix noise calibration. It reports ideal-versus-noisy observables only; no provider credentials, backend calibration, hardware job, forecasting target, or promotion permission was added. |
