@@ -53,28 +53,38 @@ re-estimated standardized return was smaller. That was an invalid convergence
 target: it was dominated by order statistics/regression to the mean and changed
 factor loadings, scales, and basis between entry and evaluation.
 
-v0.2 maintains an identity-free standardized residual level:
+v0.2 maintains two identity-free standardized residual levels, one for each
+regime definition:
 
 ```text
-S_t = rho_regime S_(t-1) + e_t / sigma_t
+S_t^j = rho_j S_(t-1)^j + P(z_t=j) e_t^j / sigma_t^j
+S_t = P(z_t=low) S_t^low + P(z_t=high) S_t^high
 ```
 
-At each eligible entry it freezes the selected component, factor mean/loadings,
-residual scale, level AR coefficient, diagnostic basket, holding horizon, and
-stop. Future returns are reprojected through exactly that frozen factor model.
-The primary continuous result is:
+Each branch is updated only in its own mean/loading/scale definition; a regime
+switch cannot inject one model's innovation into the other level. At each entry
+the selected component, both factor means/loadings/scales, regime probabilities,
+both level AR coefficients, basket, holding horizon, and stop are frozen.
+Future returns are reprojected through exactly those frozen definitions. The
+residual explanatory diagnostic is:
 
 ```text
 gross_convergence = -sign(S_t) * (S_(t+h,frozen) - S_t)
 ```
 
-The binary label requires positive gross convergence and a smaller absolute
-frozen level. Emissions also record MAE, time-to-zero, percentage displacement
-removed, breakdown, frozen-path volatility, and diagnostic turnover. A target
-is absent when even one arrival from entry through horizon is not an observed
-contiguous minute. The frozen diagnostic basket is also replayed only as a
-fixed-weight log-return diagnostic; it is not substituted for the residual
-level label and is not an executable return claim.
+Residual convergence requires positive gross convergence and a smaller absolute
+frozen level. It remains explanatory. The **primary predictive label** is now
+whether the same frozen constrained basket has positive cumulative gross log
+return through the frozen horizon. This is still a no-cost diagnostic return,
+not PnL or an executable performance claim.
+
+Every entry records projection distortion, fraction of the original signal
+preserved, correlation between basket returns and selected residual returns,
+basket/residual-label disagreement, basket directional hit, cumulative gross
+log return, and basket maximum adverse excursion. Emissions also retain
+residual MAE, time-to-zero, displacement removed, breakdown, frozen-path
+volatility, and turnover. A target is absent when even one arrival from entry
+through horizon is not an observed contiguous minute.
 
 ## Actual regime and graph effects
 
@@ -92,16 +102,21 @@ active regime at each refresh.
 ## Evaluation baselines and uncertainty
 
 All baselines are frozen from the train partition. The primary comparator is a
-conditional convergence climatology indexed by absolute residual-level bin,
-component, UTC session bucket, and regime, with predeclared sparse-cell
-fallbacks. A deterministic time-shuffled-label placebo is reported separately.
+conditional **basket-directional** climatology indexed by absolute
+residual-level bin, component, UTC session bucket, and regime, with
+predeclared sparse-cell fallbacks. A deterministic time-shuffled-label placebo
+is reported separately.
 
-The statistical interval is an exact-length circular block bootstrap confined
-within uninterrupted segments. It uses at least 2,000 replicates by default,
-reports Brier, log-loss, and calibration-improvement intervals, and records
-30-minute, 4-hour, and one-day block sensitivities. The conditional-climatology
-gate requires positive one-day lower-95% Brier improvement; it still cannot
-promote anything without executable data and a new untouched holdout.
+The statistical interval is an exact-entry-count bootstrap whose dependence
+blocks are actual contiguous observed one-minute ranges. A 1,440-minute block
+is therefore one observed trading day of raw bars, not 1,440 sparse eligible
+entries. Each sampled time block contributes the eligible entries inside it;
+the final replicate is truncated to the original entry count. It uses at least
+2,000 replicates by default, reports Brier, log-loss, and calibration-improvement
+intervals, and records 30-minute, 4-hour, and one-day sensitivities. The
+conditional-climatology gate requires positive one-day lower-95% Brier
+improvement; it still cannot promote anything without executable data and a
+new untouched holdout.
 
 IID-residual simulation, AR(1), static-vs-dynamic PCA, and no-regime ablations
 remain required matched comparators before any empirical model comparison. They

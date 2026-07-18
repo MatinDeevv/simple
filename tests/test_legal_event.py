@@ -34,6 +34,24 @@ def test_event_study_starts_strictly_after_known_time() -> None:
     assert (study["target_time"] > study["prediction_time"]).all()
 
 
+def test_abnormal_return_uses_scaled_pre_event_expected_return() -> None:
+    events = legal_event.validate_events(legal_event.synthetic_events(), legal_event.load_schema())
+    times = np.arange(20, dtype=np.int64) * legal_event.DT_NS
+    # Event known at minute 3 starts at minute 4.  With two pre-event and four
+    # post-event minutes, constant 1bp/min drift implies a 4bp expected return.
+    log_prices = np.arange(20, dtype=np.float64)[:, None] * 0.01
+    log_prices = np.repeat(log_prices, len(legal_event.PAIRS), axis=1)
+    eurusd = legal_event.PAIRS.index("EURUSD")
+    log_prices[8, eurusd] += 0.02
+    study, _summary = legal_event.run_event_study(
+        times, log_prices, events, legal_event.EventStudyConfig(horizon_steps=4, pre_event_baseline_steps=2))
+    row = study.loc[study["pair"] == "EURUSD"].iloc[0]
+    assert row["pre_event_log_return"] == pytest.approx(0.02)
+    assert row["expected_post_event_log_return"] == pytest.approx(0.04)
+    assert row["post_event_log_return"] == pytest.approx(0.06)
+    assert row["baseline_adjusted_abnormal_log_return"] == pytest.approx(0.02)
+
+
 def test_future_citation_and_conflicting_duplicate_are_rejected() -> None:
     schema = legal_event.load_schema()
     first = legal_event.synthetic_events()[0]

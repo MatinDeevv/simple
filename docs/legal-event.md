@@ -37,13 +37,34 @@ immutable primary-source event at known_at
   -> fixed scenario-weighted canonical-pair pressure vector
   -> first canonical bar strictly after known_at
   -> only a fully contiguous post-event horizon is eligible
-  -> report pair return and cross-sectional abnormal-return diagnostic
+  -> estimate each pair's expected post return from its pre-event drift
+  -> report baseline-adjusted abnormal return
 ```
 
 Using the first bar strictly after `known_at` avoids assuming the document was
 available before the close of a bar with the same timestamp. A gap through the
 pre-event baseline or post-event target invalidates the observation instead of
 creating a session-crossing return.
+
+The current expected-return model is deliberately minimal and explicit. For
+pre-event return `R_pre` across `h_pre` observed minutes and post horizon
+`h_post`, it reports:
+
+```text
+expected_post_return = (h_post / h_pre) * R_pre
+abnormal_return = post_return - expected_post_return
+```
+
+This is a per-pair drift adjustment, not a factor model or causal estimate.
+Currency-factor controls, rolling market models, synthetic controls, matched
+non-event dates, intraday seasonality, overlapping-event exclusion, and
+event-clustered inference remain required before interpreting an event result.
+
+The scenario-impact multipliers are frozen disclosed assumptions used only to
+turn recorded scenario probabilities and pair exposures into a diagnostic
+pressure vector. They are not measured legal-outcome quantities. Any future
+corpus must supply source provenance and sensitivity ranges, or estimate them
+only on a declared training partition.
 
 ## Commands
 

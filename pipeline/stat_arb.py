@@ -93,7 +93,9 @@ class ArenaConfig:
     graph_partial_correlation_threshold: float = 0.15
     covariance_shrinkage: float = 0.20
     bootstrap_samples: int = 2_000
-    bootstrap_block_sensitivity_steps: tuple[int, ...] = (30, 240, 1_440)
+    # Units are observed contiguous one-minute bars, not sparse eligible-entry
+    # rows.  The bootstrap samples raw time ranges and includes their entries.
+    bootstrap_block_sensitivity_minutes: tuple[int, ...] = (30, 240, 1_440)
     bootstrap_seed: int = 20260718
     low_regime: RegimeParameters = field(default_factory=_low_regime)
     high_regime: RegimeParameters = field(default_factory=_high_regime)
@@ -118,10 +120,12 @@ class FrozenResidualTarget:
     segment_id: int
     selected: int
     entry_level: float
-    mean_basis: np.ndarray
-    loadings_basis: np.ndarray
-    residual_scale: np.ndarray
-    level_ar: float
+    entry_levels_by_regime: np.ndarray
+    regime_probabilities: np.ndarray
+    means_by_regime: np.ndarray
+    loadings_by_regime: np.ndarray
+    residual_scales_by_regime: np.ndarray
+    level_ars: np.ndarray
     horizon_steps: int
     stop_multiple: float
     raw_basket_weights: np.ndarray
@@ -259,48 +263,89 @@ def factor_neutral_weights(signal_basis: np.ndarray, transform: np.ndarray,
     return weights / scale if scale > 1.0e-12 else np.zeros_like(weights)
 
 
-def _segment_positions(segment_ids: np.ndarray) -> list[np.ndarray]:
-    if len(segment_ids) == 0:
-        return []
-    chunks: list[np.ndarray] = []
-    start = 0
-    for end in range(1, len(segment_ids) + 1):
-        if end == len(segment_ids) or segment_ids[end] != segment_ids[start]:
-            chunks.append(np.arange(start, end, dtype=np.int64))
-            start = end
-    return chunks
+def basket_projection_diagnostics(signal_basis: np.ndarray, transform: np.ndarray,
+                                  unit_weights: np.ndarray) -> tuple[float, float]:
+    """Quantify how much constrained basket construction changed the signal."""
+    raw_signal = basis_signal_to_raw_weights(signal_basis, transform)
+    raw_norm = float(np.linalg.norm(raw_signal))
+    basket_norm = float(np.linalg.norm(unit_weights))
+    if raw_norm <= 1.0e-12 or basket_norm <= 1.0e-12:
+        return float("nan"), 0.0
+    raw_unit = raw_signal / raw_norm
+    basket_unit = np.asarray(unit_weights, dtype=np.float64) / basket_norm
+    # For an orthogonal projection this cosine is the fraction of original
+    # signal length retained; it remains interpretable after L1 normalization.
+    retained_fraction = float(np.clip(abs(raw_unit @ basket_unit), 0.0, 1.0))
+    distortion_l2 = float(np.linalg.norm(raw_unit - basket_unit))
+    return distortion_l2, retained_fraction
 
 
-def circular_block_resample_indices(segment_ids: np.ndarray, block_steps: int,
-                                    rng: np.random.Generator) -> np.ndarray:
-    """Sample exactly n observations with circular blocks inside one segment."""
-    if block_steps < 1:
-        raise ContractError("bootstrap block_steps must be positive")
-    chunks = _segment_positions(np.asarray(segment_ids))
-    if not chunks:
+def observed_minute_block_resample_indices(source_indices: np.ndarray, source_segment_ids: np.ndarray,
+                                           timeline_times: np.ndarray, timeline_segment_ids: np.ndarray,
+                                           block_minutes: int, rng: np.random.Generator) -> np.ndarray:
+    """Resample eligible entries from real contiguous minute-duration blocks.
+
+    Candidate starts are raw observed bars, never positions in the sparse
+    labelled-entry frame.  Every selected entry belongs to an actual contiguous
+    range no longer than ``block_minutes``.  Blocks near a session boundary are
+    shorter rather than circularly wrapping across time.
+    """
+    source = np.asarray(source_indices, dtype=np.int64)
+    source_segments = np.asarray(source_segment_ids, dtype=np.int64)
+    timeline = np.asarray(timeline_times, dtype=np.int64)
+    timeline_segments = np.asarray(timeline_segment_ids, dtype=np.int64)
+    if block_minutes < 1:
+        raise ContractError("bootstrap block_minutes must be positive")
+    if len(source) == 0 or len(source) != len(source_segments):
         return np.empty(0, dtype=np.int64)
-    lengths = np.asarray([len(chunk) for chunk in chunks], dtype=np.float64)
+    if len(timeline) != len(timeline_segments) or np.any(source < 0) or np.any(source >= len(timeline)):
+        raise ContractError("bootstrap source indices do not match the observed timeline")
+    if not np.array_equal(timeline_segments[source], source_segments):
+        raise ContractError("bootstrap source segment IDs do not match the observed timeline")
+    segment_ranges: list[tuple[int, int, int]] = []
+    start = 0
+    for end in range(1, len(timeline) + 1):
+        if end == len(timeline) or timeline_segments[end] != timeline_segments[start]:
+            if np.any(source_segments == timeline_segments[start]):
+                segment_ranges.append((int(timeline_segments[start]), start, end))
+            start = end
+    if not segment_ranges:
+        return np.empty(0, dtype=np.int64)
+    lengths = np.asarray([end - start for _segment, start, end in segment_ranges], dtype=np.float64)
     probabilities = lengths / lengths.sum()
     drawn: list[np.ndarray] = []
-    remaining = int(lengths.sum())
+    remaining = len(source)
+    attempts = 0
+    max_attempts = max(10_000, len(source) * 200)
     while remaining > 0:
-        chunk = chunks[int(rng.choice(len(chunks), p=probabilities))]
-        start = int(rng.integers(len(chunk)))
-        width = min(block_steps, remaining)
-        offsets = (start + np.arange(width, dtype=np.int64)) % len(chunk)
-        drawn.append(chunk[offsets])
-        remaining -= width
-    return np.concatenate(drawn)
+        attempts += 1
+        if attempts > max_attempts:
+            raise ContractError("time-block bootstrap could not draw enough eligible entries")
+        segment, start, end = segment_ranges[int(rng.choice(len(segment_ranges), p=probabilities))]
+        block_start = int(rng.integers(start, end))
+        block_end = min(block_start + block_minutes, end)
+        # The segment contract means this is a genuine elapsed observed-minute
+        # interval, not an arbitrary group of entry observations.
+        if block_end - block_start > 1 and not np.all(np.diff(timeline[block_start:block_end]) == DT_NS):
+            raise ContractError("time-block bootstrap crossed a non-contiguous observed interval")
+        selected = np.flatnonzero((source_segments == segment) & (source >= block_start) & (source < block_end))
+        if len(selected):
+            drawn.append(selected)
+            remaining -= len(selected)
+    return np.concatenate(drawn)[:len(source)]
 
 
-def circular_block_bootstrap_comparison(model_probability: np.ndarray, baseline_probability: np.ndarray,
-                                        labels: np.ndarray, segment_ids: np.ndarray, block_steps: int,
-                                        samples: int, seed: int) -> dict[str, dict[str, float]]:
-    """Exact-length circular-block CIs for Brier, log loss, and calibration."""
+def observed_minute_block_bootstrap_comparison(model_probability: np.ndarray, baseline_probability: np.ndarray,
+                                               labels: np.ndarray, source_indices: np.ndarray,
+                                               source_segment_ids: np.ndarray, timeline_times: np.ndarray,
+                                               timeline_segment_ids: np.ndarray, block_minutes: int,
+                                               samples: int, seed: int) -> dict[str, dict[str, float]]:
+    """Exact-entry-count CIs whose dependence blocks are real minute durations."""
     model = np.asarray(model_probability, dtype=np.float64)
     baseline = np.asarray(baseline_probability, dtype=np.float64)
     outcome = np.asarray(labels, dtype=np.float64)
-    if len(model) < 2 or len(model) != len(baseline) or len(model) != len(outcome) or len(model) != len(segment_ids):
+    if (len(model) < 2 or len(model) != len(baseline) or len(model) != len(outcome)
+            or len(model) != len(source_indices) or len(model) != len(source_segment_ids)):
         return {name: {"point": float("nan"), "lower_95": float("nan"), "upper_95": float("nan")}
                 for name in ("brier_improvement", "log_loss_improvement", "calibration_improvement")}
     if samples < 1:
@@ -313,7 +358,8 @@ def circular_block_bootstrap_comparison(model_probability: np.ndarray, baseline_
     estimates = np.empty((samples, 3), dtype=np.float64)
     rng = np.random.default_rng(seed)
     for draw in range(samples):
-        indices = circular_block_resample_indices(segment_ids, block_steps, rng)
+        indices = observed_minute_block_resample_indices(
+            source_indices, source_segment_ids, timeline_times, timeline_segment_ids, block_minutes, rng)
         sampled_labels = outcome[indices]
         estimates[draw] = (
             brier_score(baseline[indices], sampled_labels) - brier_score(model[indices], sampled_labels),
@@ -361,7 +407,10 @@ class CausalFactorState:
         self.graph_pressures = [np.zeros(N_PAIRS, dtype=np.float64) for _ in range(2)]
         self.graph_cluster_sizes = [np.ones(N_PAIRS, dtype=np.int64) for _ in range(2)]
         self.graph_edges: list[list[tuple[int, int, float]]] = [[], []]
-        self.residual_level = np.zeros(N_PAIRS, dtype=np.float64)
+        # Each level is defined only in its own mean/loading/scale coordinate
+        # system.  A blended level is emitted separately; no branch ever
+        # receives innovations from the other regime definition.
+        self.residual_levels = [np.zeros(N_PAIRS, dtype=np.float64) for _ in range(2)]
         self.log_vol_mean = 0.0
         self.log_vol_variance = 1.0
         self.regime_high_probability = 0.5
@@ -431,6 +480,8 @@ class CausalFactorState:
         self.steps += 1
         residuals: list[np.ndarray] = []
         factors_by_regime: list[np.ndarray] = []
+        residual_scales: list[np.ndarray] = []
+        residual_innovations: list[np.ndarray] = []
         for regime, parameters in enumerate(self.parameters):
             alpha_covariance = _alpha(parameters.covariance_half_life_steps) * posterior[regime]
             delta = transformed_return - self.means[regime]
@@ -455,12 +506,22 @@ class CausalFactorState:
             self.previous_residuals[regime] = residual.copy()
             residuals.append(residual)
             factors_by_regime.append(factors)
+            scale = np.sqrt(np.maximum(self.residual_variances[regime], 1.0e-16))
+            innovation = residual / scale
+            # Posterior-weighted innovations let an inactive regime decay in
+            # its own coordinate system without injecting active-regime state.
+            self.residual_levels[regime] = (parameters.level_ar * self.residual_levels[regime]
+                                            + posterior[regime] * innovation)
+            residual_scales.append(scale)
+            residual_innovations.append(innovation)
         active_regime = int(self.regime_high_probability >= 0.5)
         parameters = self.parameters[active_regime]
         residual = residuals[active_regime]
-        residual_scale = np.sqrt(np.maximum(self.residual_variances[active_regime], 1.0e-16))
-        residual_innovation = residual / residual_scale
-        self.residual_level = parameters.level_ar * self.residual_level + residual_innovation
+        residual_scale = residual_scales[active_regime]
+        residual_innovation = residual_innovations[active_regime]
+        regime_probabilities = np.asarray(posterior, dtype=np.float64)
+        levels_by_regime = np.stack(self.residual_levels)
+        blended_residual_level = regime_probabilities @ levels_by_regime
         beta = np.clip(self.ar_numerators[active_regime] / np.maximum(self.ar_denominators[active_regime], 1.0e-16),
                        -0.9999, 0.9999)
         half_life = np.full(N_PAIRS, np.inf, dtype=np.float64)
@@ -471,7 +532,9 @@ class CausalFactorState:
             "residual": residual,
             "residual_scale": residual_scale,
             "residual_innovation": residual_innovation,
-            "residual_level": self.residual_level.copy(),
+            "residual_level": blended_residual_level.copy(),
+            "residual_levels_by_regime": levels_by_regime.copy(),
+            "regime_probabilities": regime_probabilities.copy(),
             "beta": beta,
             "half_life": half_life,
             "factors": factors_by_regime[active_regime],
@@ -482,8 +545,10 @@ class CausalFactorState:
             "active_regime": "high" if active_regime else "low",
             "active_regime_index": active_regime,
             "parameters": parameters,
-            "mean": self.means[active_regime].copy(),
+            "means_by_regime": np.stack(self.means).copy(),
             "loadings": self.loadings_by_regime[active_regime].copy(),
+            "loadings_by_regime": np.stack(self.loadings_by_regime).copy(),
+            "residual_scales_by_regime": np.stack(residual_scales).copy(),
             "graph_pressure": self.graph_pressures[active_regime].copy(),
             "graph_cluster_size": self.graph_cluster_sizes[active_regime].copy(),
         }, edges
@@ -529,26 +594,36 @@ def prediction_from_features(features: dict[str, Any]) -> dict[str, Any]:
 
 def evaluate_frozen_residual_target(times: np.ndarray, log_prices: np.ndarray, transform: np.ndarray,
                                     entry: FrozenResidualTarget) -> dict[str, Any] | None:
-    """Observe a fixed-horizon residual-level path using only the frozen entry model."""
+    """Observe frozen residual and basket paths without changing regime definitions."""
     target_index = entry.source_index + entry.horizon_steps
     if target_index >= len(times):
         return None
     for index in range(entry.source_index + 1, target_index + 1):
         if not contiguous_60s(int(times[index - 1]), int(times[index]), DT_NS):
             return None
-    level = entry.entry_level
+    levels_by_regime = entry.entry_levels_by_regime.copy()
     levels: list[float] = []
-    innovations: list[float] = []
+    residual_innovations: list[float] = []
+    selected_residual_returns: list[float] = []
     basket_returns: list[float] = []
     for index in range(entry.source_index + 1, target_index + 1):
         raw_return = log_prices[index] - log_prices[index - 1]
         basket_returns.append(float(entry.raw_basket_weights @ raw_return))
-        centered = transform @ raw_return - entry.mean_basis
-        residual = centered - entry.loadings_basis @ (entry.loadings_basis.T @ centered)
-        innovation = float(residual[entry.selected] / max(entry.residual_scale[entry.selected], 1.0e-12))
-        level = entry.level_ar * level + innovation
-        innovations.append(innovation)
-        levels.append(level)
+        transformed = transform @ raw_return
+        residual_values = np.empty(2, dtype=np.float64)
+        innovations = np.empty(2, dtype=np.float64)
+        for regime in range(2):
+            centered = transformed - entry.means_by_regime[regime]
+            residual = centered - entry.loadings_by_regime[regime] @ (
+                entry.loadings_by_regime[regime].T @ centered)
+            residual_values[regime] = residual[entry.selected]
+            innovations[regime] = residual[entry.selected] / max(
+                entry.residual_scales_by_regime[regime, entry.selected], 1.0e-12)
+            levels_by_regime[regime] = (entry.level_ars[regime] * levels_by_regime[regime]
+                                        + entry.regime_probabilities[regime] * innovations[regime])
+        levels.append(float((entry.regime_probabilities @ levels_by_regime)[entry.selected]))
+        residual_innovations.append(float(entry.regime_probabilities @ innovations))
+        selected_residual_returns.append(float(entry.regime_probabilities @ residual_values))
     path = np.asarray(levels, dtype=np.float64)
     entry_sign = float(np.sign(entry.entry_level))
     gross_convergence = -entry_sign * (float(path[-1]) - entry.entry_level)
@@ -556,17 +631,32 @@ def evaluate_frozen_residual_target(times: np.ndarray, log_prices: np.ndarray, t
     time_to_zero = next((offset + 1 for offset, value in enumerate(path) if value * entry_sign <= 0.0), None)
     removed = 100.0 * (1.0 - abs(float(path[-1])) / max(abs(entry.entry_level), 1.0e-12))
     breakdown = bool(np.max(np.abs(path)) > entry.stop_multiple * abs(entry.entry_level))
+    basket_path = np.cumsum(np.asarray(basket_returns, dtype=np.float64))
+    basket_gross = float(basket_path[-1])
+    basket_directional_hit = int(basket_gross > 0.0)
+    residual_label = int(gross_convergence > 0.0 and abs(float(path[-1])) < abs(entry.entry_level))
+    if len(basket_returns) < 2 or np.std(basket_returns) <= 1.0e-16 or np.std(selected_residual_returns) <= 1.0e-16:
+        tracking_correlation = float("nan")
+    else:
+        tracking_correlation = float(np.corrcoef(basket_returns, selected_residual_returns)[0, 1])
     return {
         "target_time": pd.Timestamp(int(times[target_index]), unit="ns", tz="UTC"),
-        "convergence_label": int(gross_convergence > 0.0 and abs(float(path[-1])) < abs(entry.entry_level)),
+        # The residual label remains explanatory.  The primary predictive
+        # label is the fixed basket's directional gross log return below.
+        "convergence_label": residual_label,
         "gross_convergence": gross_convergence,
         "mae_level": float(max(0.0, -np.min(path_gross))),
         "time_to_zero_steps": float(time_to_zero) if time_to_zero is not None else float("nan"),
         "percentage_displacement_removed": removed,
         "breakdown_label": int(breakdown),
-        "target_path_volatility": float(np.std(innovations, ddof=0)),
+        "target_path_volatility": float(np.std(residual_innovations, ddof=0)),
         "frozen_target_level": float(path[-1]),
-        "frozen_basket_cumulative_log_return": float(np.sum(basket_returns)),
+        "basket_directional_label": basket_directional_hit,
+        "basket_tracking_correlation": tracking_correlation,
+        "basket_max_adverse_excursion": float(max(0.0, -np.min(basket_path))),
+        "basket_residual_convergence_disagreement": int(basket_directional_hit != residual_label),
+        "basket_cumulative_gross_log_return": basket_gross,
+        "frozen_basket_cumulative_log_return": basket_gross,
         "frozen_basket_path_volatility": float(np.std(basket_returns, ddof=0)),
     }
 
@@ -576,9 +666,9 @@ def _level_bin(values: pd.Series) -> pd.Series:
                      index=values.index, dtype=np.int8)
 
 
-def frozen_conditional_climatology(train: pd.DataFrame, target: pd.DataFrame,
+def frozen_conditional_climatology(train: pd.DataFrame, target: pd.DataFrame, label_column: str,
                                    minimum_cell_count: int = 20) -> tuple[np.ndarray, list[str]]:
-    """Fit only on train labels; predict conditional convergence climatology."""
+    """Fit only on train labels; predict a conditional primary-label climatology."""
     if train.empty or target.empty:
         return np.full(len(target), float("nan")), []
     source = train.copy()
@@ -587,7 +677,7 @@ def frozen_conditional_climatology(train: pd.DataFrame, target: pd.DataFrame,
     destination["_level_bin"] = _level_bin(destination["entry_residual_level"])
 
     def table(columns: list[str]) -> dict[tuple[Any, ...], tuple[int, int]]:
-        grouped = source.groupby(columns, dropna=False)["convergence_label"].agg(["sum", "count"])
+        grouped = source.groupby(columns, dropna=False)[label_column].agg(["sum", "count"])
         return {key if isinstance(key, tuple) else (key,): (int(row["sum"]), int(row["count"]))
                 for key, row in grouped.iterrows()}
 
@@ -595,7 +685,7 @@ def frozen_conditional_climatology(train: pd.DataFrame, target: pd.DataFrame,
     component_columns = ["_level_bin", "selected_component_index", "active_regime"]
     regime_columns = ["_level_bin", "active_regime"]
     detailed, component, regime = (table(detailed_columns), table(component_columns), table(regime_columns))
-    global_probability = float(source["convergence_label"].mean())
+    global_probability = float(source[label_column].mean())
     predictions: list[float] = []
     tiers: list[str] = []
     for _, row in destination.iterrows():
@@ -632,12 +722,15 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
     segment_id = 0
     gap_resets = 0
     max_contiguous_state_steps = 0
+    timeline_segment_ids = np.zeros(len(times), dtype=np.int64)
     for index in range(1, len(times)):
         if not contiguous_60s(int(times[index - 1]), int(times[index]), DT_NS):
             state.reset()
             segment_id += 1
             gap_resets += 1
+            timeline_segment_ids[index] = segment_id
             continue
+        timeline_segment_ids[index] = segment_id
         features, edges = state.update(log_prices[index] - log_prices[index - 1])
         max_contiguous_state_steps = max(max_contiguous_state_steps, state.steps)
         for left, right, partial in edges:
@@ -658,6 +751,8 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             parameters.neutral_factor_count,
         )
         weights = unit_weights * float(decision["position_scale"])
+        projection_distortion_l2, signal_preserved_fraction = basket_projection_diagnostics(
+            decision["signal_basis"], transform, unit_weights)
         turnover = float(np.sum(np.abs(weights - state.previous_weights)))
         state.previous_weights = weights
         raw_factor_directions = inverse_transform @ np.asarray(features["loadings"])
@@ -674,7 +769,7 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             "active_regime": features["active_regime"],
             "high_volatility_regime_probability": float(features["regime_high_probability"]),
             "session_bucket": int(pd.Timestamp(int(times[index]), unit="ns", tz="UTC").hour // 6),
-            "p_convergence": float(decision["probability"]),
+            "p_basket_directional": float(decision["probability"]),
             "breakdown_probability": float(decision["breakdown"]),
             "entry_eligible": entry_eligible,
             "entry_residual_level": float(decision["selected_level"]),
@@ -684,6 +779,8 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             "neutral_factor_count": parameters.neutral_factor_count,
             "diagnostic_position_scale": float(decision["position_scale"] if entry_eligible else 0.0),
             "diagnostic_gross_exposure_l1": float(np.sum(np.abs(weights))),
+            "projection_distortion_l2": projection_distortion_l2,
+            "signal_preserved_fraction": signal_preserved_fraction,
             "turnover_l1_diagnostic": turnover,
             "selected_graph_pressure": float(decision["selected_graph_pressure"]),
             "selected_graph_cluster_size": int(decision["selected_cluster_size"]),
@@ -692,6 +789,11 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             "volatility_z": float(features["volatility_z"]),
             "target_time": pd.NaT,
             "convergence_label": np.nan,
+            "basket_directional_label": np.nan,
+            "basket_tracking_correlation": np.nan,
+            "basket_max_adverse_excursion": np.nan,
+            "basket_residual_convergence_disagreement": np.nan,
+            "basket_cumulative_gross_log_return": np.nan,
             "gross_convergence": np.nan,
             "mae_level": np.nan,
             "time_to_zero_steps": np.nan,
@@ -716,10 +818,12 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             segment_id=segment_id,
             selected=selected,
             entry_level=float(decision["selected_level"]),
-            mean_basis=np.asarray(features["mean"]).copy(),
-            loadings_basis=np.asarray(features["loadings"]).copy(),
-            residual_scale=np.asarray(features["residual_scale"]).copy(),
-            level_ar=parameters.level_ar,
+            entry_levels_by_regime=np.asarray(features["residual_levels_by_regime"]).copy(),
+            regime_probabilities=np.asarray(features["regime_probabilities"]).copy(),
+            means_by_regime=np.asarray(features["means_by_regime"]).copy(),
+            loadings_by_regime=np.asarray(features["loadings_by_regime"]).copy(),
+            residual_scales_by_regime=np.asarray(features["residual_scales_by_regime"]).copy(),
+            level_ars=np.asarray([config.low_regime.level_ar, config.high_regime.level_ar], dtype=np.float64),
             horizon_steps=parameters.holding_horizon_steps,
             stop_multiple=parameters.stop_multiple,
             raw_basket_weights=weights.copy(),
@@ -733,30 +837,33 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
         if outcome is not None:
             record.update(outcome)
     emissions = pd.DataFrame(records)
-    labelled = emissions[emissions["convergence_label"].notna()].copy()
-    labelled["convergence_label"] = labelled["convergence_label"].astype(np.int8)
+    labelled = emissions[emissions["basket_directional_label"].notna()].copy()
+    labelled["basket_directional_label"] = labelled["basket_directional_label"].astype(np.int8)
     train = labelled[labelled["source_index"] + labelled["holding_horizon_steps"] < test_start_index].copy()
     oos = labelled[labelled["source_index"] >= test_start_index].copy()
     if len(train) < 100 or len(oos) < 100:
         raise ContractError("train/OOS target partitions require at least 100 valid frozen entries each")
-    frozen_train_prior = float(train["convergence_label"].mean())
-    conditional_probability, conditional_tiers = frozen_conditional_climatology(train, oos)
-    oos_probability = oos["p_convergence"].to_numpy(dtype=np.float64)
-    oos_label = oos["convergence_label"].to_numpy(dtype=np.float64)
+    frozen_train_prior = float(train["basket_directional_label"].mean())
+    conditional_probability, conditional_tiers = frozen_conditional_climatology(
+        train, oos, "basket_directional_label")
+    oos_probability = oos["p_basket_directional"].to_numpy(dtype=np.float64)
+    oos_label = oos["basket_directional_label"].to_numpy(dtype=np.float64)
     prior_probability = np.full(len(oos), frozen_train_prior, dtype=np.float64)
     emissions["p_conditional_climatology"] = np.nan
     emissions["conditional_climatology_tier"] = pd.NA
     emissions.loc[oos.index, "p_conditional_climatology"] = conditional_probability
     emissions.loc[oos.index, "conditional_climatology_tier"] = conditional_tiers
     bootstrap_sensitivity = {
-        f"{block_steps}_steps": circular_block_bootstrap_comparison(
+        f"{block_minutes}_observed_minutes": observed_minute_block_bootstrap_comparison(
             oos_probability, conditional_probability, oos_label,
-            oos["segment_id"].to_numpy(dtype=np.int64), block_steps, config.bootstrap_samples,
-            config.bootstrap_seed + block_steps,
+            oos["source_index"].to_numpy(dtype=np.int64), oos["segment_id"].to_numpy(dtype=np.int64),
+            times, timeline_segment_ids, block_minutes, config.bootstrap_samples,
+            config.bootstrap_seed + block_minutes,
         )
-        for block_steps in config.bootstrap_block_sensitivity_steps
+        for block_minutes in config.bootstrap_block_sensitivity_minutes
     }
-    primary_bootstrap = bootstrap_sensitivity[f"{config.bootstrap_block_sensitivity_steps[-1]}_steps"]
+    primary_bootstrap = bootstrap_sensitivity[
+        f"{config.bootstrap_block_sensitivity_minutes[-1]}_observed_minutes"]
     shuffled_labels = oos_label[np.random.default_rng(config.bootstrap_seed).permutation(len(oos_label))]
     prediction_pass = bool(
         brier_score(oos_probability, oos_label) < brier_score(conditional_probability, oos_label)
@@ -768,12 +875,13 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
         "interpretation": "causal classical residual-level research only; no execution, PnL, capacity, or market-impact claim",
         "pair_scope": list(PAIRS),
         "target_contract": {
-            "target": "frozen selected residual level converges after its frozen entry-specific holding horizon",
+            "primary_target": "fixed frozen basket has positive cumulative gross log return over the entry-specific holding horizon",
+            "residual_explanatory_target": "frozen selected residual level converges after its frozen entry-specific holding horizon",
             "gross_convergence": "-sign(S_t) * (S_{t+h,frozen} - S_t)",
-            "residual_level": "S_t = rho_regime * S_(t-1) + e_t / frozen_residual_scale",
-            "frozen_at_entry": ["factor_mean", "factor_loadings", "residual_scale", "selected_component", "basket_weights", "level_ar", "horizon", "stop"],
+            "residual_level": "S_t = p_low S_t_low + p_high S_t_high; each branch updates only in its own frozen coordinate system",
+            "frozen_at_entry": ["both_regime_factor_means", "both_regime_factor_loadings", "both_regime_residual_scales", "regime_probabilities", "selected_component", "basket_weights", "both_level_ARs", "horizon", "stop"],
             "target_available_only_after": "all entry-to-horizon arrivals are observed contiguous one-minute bars",
-            "outcome_diagnostics": ["MAE", "time_to_zero", "percentage_displacement_removed", "breakdown", "path_volatility", "turnover"],
+            "outcome_diagnostics": ["residual_MAE", "time_to_zero", "percentage_displacement_removed", "residual_breakdown", "residual_path_volatility", "basket_tracking_correlation", "projection_distortion", "signal_preserved_fraction", "basket_disagreement", "basket_MAE", "basket_gross_log_return", "turnover"],
             "target_excluded_from_feature_state": True,
         },
         "causality": {
@@ -805,7 +913,7 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             "frozen_train_prior": {"probability": frozen_train_prior, "brier_score": brier_score(prior_probability, oos_label), "log_loss": log_loss(prior_probability, oos_label), "calibration_error": calibration_error(prior_probability, oos_label)},
             "frozen_conditional_climatology": {"brier_score": brier_score(conditional_probability, oos_label), "log_loss": log_loss(conditional_probability, oos_label), "calibration_error": calibration_error(conditional_probability, oos_label), "tier_counts": {str(key): int(value) for key, value in tier_counts.items()}},
             "time_shuffled_residual_placebo": {"model_brier_score": brier_score(oos_probability, shuffled_labels), "conditional_climatology_brier_score": brier_score(conditional_probability, shuffled_labels), "seed": config.bootstrap_seed},
-            "circular_block_bootstrap": {"samples": config.bootstrap_samples, "exact_replicate_length": int(len(oos)), "within_uninterrupted_segments": True, "sensitivity": bootstrap_sensitivity},
+            "observed_minute_block_bootstrap": {"samples": config.bootstrap_samples, "exact_replicate_entry_count": int(len(oos)), "block_unit": "actual contiguous observed one-minute bars", "entries_selected_from_time_blocks": True, "sensitivity": bootstrap_sensitivity},
             "passes_conditional_climatology_prediction_gate": prediction_pass,
         },
         "promotion_status": "REJECTED_NO_EXECUTION_DATA_AND_NO_NEW_UNTOUCHED_HOLDOUT: v0.2 is frozen pending post-2024 data",
@@ -861,7 +969,8 @@ def write_result(result: ArenaResult, out_dir: Path, label: str) -> dict[str, st
     result.graph.to_parquet(graph_path, index=False, compression="zstd")
     daily = (result.emissions.assign(day=result.emissions["timestamp"].dt.floor("D"))
              .groupby("day", as_index=False)
-             .agg(emissions=("source_index", "size"), mean_p_convergence=("p_convergence", "mean"),
+             .agg(emissions=("source_index", "size"),
+                  mean_p_basket_directional=("p_basket_directional", "mean"),
                   diagnostic_turnover_l1=("turnover_l1_diagnostic", "sum")))
     daily.to_parquet(daily_path, index=False, compression="zstd")
     result.summary["outputs"] = {"minute": str(emissions_path.relative_to(ROOT)).replace("\\", "/"), "graph": str(graph_path.relative_to(ROOT)).replace("\\", "/"), "daily": str(daily_path.relative_to(ROOT)).replace("\\", "/")}
@@ -886,7 +995,7 @@ def _fast_config() -> ArenaConfig:
     return ArenaConfig(
         warmup_steps=64,
         bootstrap_samples=32,
-        bootstrap_block_sensitivity_steps=(8, 16, 32),
+        bootstrap_block_sensitivity_minutes=(8, 16, 32),
         low_regime=RegimeParameters(32.0, 32.0, 8, 0.94, 0.50, 8, 2.0, 2),
         high_regime=RegimeParameters(16.0, 16.0, 4, 0.82, 0.75, 6, 1.35, 1),
     )
@@ -901,7 +1010,7 @@ def self_check() -> dict[str, Any]:
     comparable = result.emissions[result.emissions["source_index"] < 680].set_index("source_index")
     altered_comparable = altered_result.emissions[altered_result.emissions["source_index"] < 680].set_index("source_index")
     common = comparable.index.intersection(altered_comparable.index)
-    prefix_equal = bool(np.array_equal(comparable.loc[common, "p_convergence"], altered_comparable.loc[common, "p_convergence"]))
+    prefix_equal = bool(np.array_equal(comparable.loc[common, "p_basket_directional"], altered_comparable.loc[common, "p_basket_directional"]))
     transform, inverse, _labels = identity_free_transform()
     return {
         "passed": bool(prefix_equal and np.allclose(transform @ inverse, np.eye(N_PAIRS), atol=1e-12)

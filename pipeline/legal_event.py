@@ -218,7 +218,12 @@ def run_event_study(times: np.ndarray, log_prices: np.ndarray, events: list[dict
         pressure = event_pressure(event)
         post_return = log_prices[end] - log_prices[start]
         baseline_return = log_prices[start] - log_prices[baseline_start]
-        abnormal_return = post_return - np.median(post_return)
+        # The pre-event window is a simple per-pair drift estimator.  Scale it
+        # to the post horizon before computing abnormal return; cross-sectional
+        # demeaning alone cannot make pre_event_baseline_steps an expected-return
+        # model.  Factor/synthetic-control alternatives remain future contracts.
+        expected_return = (config.horizon_steps / config.pre_event_baseline_steps) * baseline_return
+        abnormal_return = post_return - expected_return
         for pair_index, pair in enumerate(PAIRS):
             if pressure[pair_index] == 0.0:
                 continue
@@ -239,7 +244,8 @@ def run_event_study(times: np.ndarray, log_prices: np.ndarray, events: list[dict
                 "predicted_direction": predicted_sign,
                 "post_event_log_return": float(post_return[pair_index]),
                 "pre_event_log_return": float(baseline_return[pair_index]),
-                "cross_section_abnormal_log_return": float(abnormal_return[pair_index]),
+                "expected_post_event_log_return": float(expected_return[pair_index]),
+                "baseline_adjusted_abnormal_log_return": float(abnormal_return[pair_index]),
                 "direction_match": int(predicted_sign == realized_sign) if realized_sign != 0 else np.nan,
                 "event_content_sha256": event["content_sha256"],
             })

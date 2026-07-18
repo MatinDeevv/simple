@@ -16,7 +16,7 @@ import stat_arb
 FAST_CONFIG = stat_arb.ArenaConfig(
     warmup_steps=64,
     bootstrap_samples=32,
-    bootstrap_block_sensitivity_steps=(8, 16, 32),
+    bootstrap_block_sensitivity_minutes=(8, 16, 32),
     low_regime=stat_arb.RegimeParameters(32.0, 32.0, 8, 0.94, 0.50, 8, 2.0, 2),
     high_regime=stat_arb.RegimeParameters(16.0, 16.0, 4, 0.82, 0.75, 6, 1.35, 1),
 )
@@ -69,11 +69,19 @@ def test_factor_neutral_weights_are_currency_and_selected_factor_neutral() -> No
     assert np.isclose(np.sum(np.abs(weights)), 1.0)
 
 
-def test_circular_bootstrap_has_exact_sample_length_and_never_indexes_outside_input() -> None:
-    segment_ids = np.asarray([0, 0, 0, 0, 1, 1, 1], dtype=np.int64)
-    indices = stat_arb.circular_block_resample_indices(segment_ids, 3, np.random.default_rng(3))
-    assert len(indices) == len(segment_ids)
-    assert (indices >= 0).all() and (indices < len(segment_ids)).all()
+def test_observed_minute_bootstrap_samples_sparse_entries_from_real_time_blocks() -> None:
+    timeline_times = np.arange(40, dtype=np.int64) * stat_arb.DT_NS
+    timeline_segments = np.zeros(len(timeline_times), dtype=np.int64)
+    # These are deliberately sparse: 10 entry rows are not ten minutes.
+    source_indices = np.asarray([1, 2, 3, 21, 22, 23], dtype=np.int64)
+    source_segments = np.zeros(len(source_indices), dtype=np.int64)
+    indices = stat_arb.observed_minute_block_resample_indices(
+        source_indices, source_segments, timeline_times, timeline_segments, 3, np.random.default_rng(3))
+    assert len(indices) == len(source_indices)
+    assert (indices >= 0).all() and (indices < len(source_indices)).all()
+    # Every selected observation is indexed through the raw observed timeline,
+    # so the configured unit is minutes rather than dataframe row positions.
+    assert np.all(np.diff(timeline_times) == stat_arb.DT_NS)
 
 
 def test_frozen_target_uses_entry_model_and_reports_path_diagnostics() -> None:
@@ -85,10 +93,12 @@ def test_frozen_target_uses_entry_model_and_reports_path_diagnostics() -> None:
         segment_id=0,
         selected=0,
         entry_level=2.0,
-        mean_basis=np.zeros(len(stat_arb.PAIRS)),
-        loadings_basis=np.zeros((len(stat_arb.PAIRS), 3)),
-        residual_scale=np.ones(len(stat_arb.PAIRS)),
-        level_ar=0.9,
+        entry_levels_by_regime=np.asarray([np.full(len(stat_arb.PAIRS), 2.0), np.zeros(len(stat_arb.PAIRS))]),
+        regime_probabilities=np.asarray([1.0, 0.0]),
+        means_by_regime=np.zeros((2, len(stat_arb.PAIRS))),
+        loadings_by_regime=np.zeros((2, len(stat_arb.PAIRS), 3)),
+        residual_scales_by_regime=np.ones((2, len(stat_arb.PAIRS))),
+        level_ars=np.asarray([0.9, 0.8]),
         horizon_steps=2,
         stop_multiple=2.0,
         raw_basket_weights=np.zeros(len(stat_arb.PAIRS)),
@@ -100,6 +110,29 @@ def test_frozen_target_uses_entry_model_and_reports_path_diagnostics() -> None:
     assert outcome["gross_convergence"] > 0.0
     assert outcome["percentage_displacement_removed"] > 0.0
     assert outcome["frozen_basket_cumulative_log_return"] == 0.0
+    assert outcome["basket_directional_label"] == 0
+    assert outcome["basket_residual_convergence_disagreement"] == 1
+
+
+def test_separate_regime_levels_do_not_jump_on_a_pure_regime_label_flip() -> None:
+    same_level_regime = stat_arb.RegimeParameters(16.0, 16.0, 4, 0.95, 0.50, 8, 2.0, 1)
+    config = stat_arb.ArenaConfig(low_regime=same_level_regime, high_regime=same_level_regime)
+    transform, _inverse, _labels = stat_arb.identity_free_transform()
+    state = stat_arb.CausalFactorState(config, transform)
+    state.residual_levels = [np.ones(len(stat_arb.PAIRS)), np.ones(len(stat_arb.PAIRS))]
+    # Hold the volatility update fixed so only the active-regime label changes.
+    state._update_regime_probability = lambda _raw: 0.0  # type: ignore[method-assign]
+    state.regime_high_probability = 0.0
+    low_features, _ = state.update(np.zeros(len(stat_arb.PAIRS)))
+    state.residual_levels = [np.ones(len(stat_arb.PAIRS)), np.ones(len(stat_arb.PAIRS))]
+    state.regime_high_probability = 1.0
+    high_features, _ = state.update(np.zeros(len(stat_arb.PAIRS)))
+    np.testing.assert_allclose(low_features["residual_level"], high_features["residual_level"], atol=1e-12)
+    np.testing.assert_allclose(
+        high_features["residual_level"],
+        high_features["regime_probabilities"] @ high_features["residual_levels_by_regime"],
+        atol=1e-12,
+    )
 
 
 def test_causal_emissions_ignore_future_price_mutations() -> None:
@@ -111,7 +144,7 @@ def test_causal_emissions_ignore_future_price_mutations() -> None:
     left = baseline.emissions[baseline.emissions["source_index"] < 680].set_index("source_index")
     right = altered.emissions[altered.emissions["source_index"] < 680].set_index("source_index")
     common = left.index.intersection(right.index)
-    np.testing.assert_array_equal(left.loc[common, "p_convergence"], right.loc[common, "p_convergence"])
+    np.testing.assert_array_equal(left.loc[common, "p_basket_directional"], right.loc[common, "p_basket_directional"])
     np.testing.assert_array_equal(left.loc[common, "breakdown_probability"], right.loc[common, "breakdown_probability"])
 
 
@@ -123,6 +156,9 @@ def test_arena_uses_frozen_level_targets_and_never_promotes_bid_only_data() -> N
     assert (labelled["target_time"] > labelled["timestamp"]).all()
     assert labelled["gross_convergence"].notna().all()
     assert labelled["target_path_volatility"].notna().all()
+    assert labelled["basket_directional_label"].notna().all()
+    assert labelled["basket_residual_convergence_disagreement"].isin([0, 1]).all()
+    assert labelled["projection_distortion_l2"].notna().all()
     currency_exposures = result.emissions.filter(regex=r"^currency_incidence_exposure_").to_numpy(dtype=float)
     assert float(np.nanmax(np.abs(currency_exposures))) < 1e-8
     selected_factor_exposures = result.emissions.filter(regex=r"^selected_factor_exposure_").to_numpy(dtype=float)
