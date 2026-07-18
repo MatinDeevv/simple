@@ -1,0 +1,32 @@
+{
+  "schema_version": "fxsim-legal-event-v1",
+  "legal_stages": [
+    "proposal",
+    "consultation",
+    "final_rule",
+    "effective",
+    "enforcement",
+    "court_decision",
+    "appeal"
+  ],
+  "scenarios": [
+    "withdrawn",
+    "enacted",
+    "diluted",
+    "injunction",
+    "appeal_success",
+    "aggressive_enforcement",
+    "loophole"
+  ],
+  "required_event_fields": [
+    "event_id",
+    "source_document_id",
+    "jurisdiction",
+    "authority",
+    "published_at",
+    "known_at",
+    "legal_stage",
+    "scenario_probabilities",
+    "pair_exposures"
+  ]
+}

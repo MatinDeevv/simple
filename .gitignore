@@ -21,6 +21,7 @@ env/
 dukascopy_data/
 data_canonical/
 data_derived/
+data_events/
 *.zip
 
 # Logs

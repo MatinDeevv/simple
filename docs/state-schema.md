@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.5 |
+| **Version** | 1.7 |
 | **Status** | DRAFT — open items assigned, see §7 |
 | **Owner** | Chief Systems Architect |
 | **Date** | 2026-07-18 |
@@ -182,7 +182,8 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 | OQ-11 | ~~Ingestion spec~~ **RESOLVED 2026-07-17** (D-007): see `docs/datapipe.md` — pipeline v1.0.0, canonical zstd parquet in `data_canonical/` + generated `manifest.json` content hashes; its instrument order is validated against tracked `config/instruments.json` | sim-datapipe | — |
 | OQ-12 | Adversarial validation plan: lookahead-leak tests (§5 rule), triangle-identity leak test (§6), residual-`F` sanity bounds | sim-redteam | v1 sign-off |
 | OQ-13 | **FROZEN** experimental quantum-software representations: density filter, qutrit trajectories/tomography, ten-qutrit MPS/TEBD, ten-qubit kernel/reservoir, and Aer synthetic-noise calibration; never a claim that FX is physically quantum; see `docs/quantum-frontier.md` and `docs/quantum-redteam.md` | Chief Systems Architect | noncanonical negative-results archive: every executed predictive representation loses to a required baseline or fails convergence; no new quantum model until shared target/classical/OOS gates pass |
-| OQ-14 | **PARTIALLY IMPLEMENTED 2026-07-18** (D-026): causal FX residual-convergence arena with fixed target, gap policy, frozen train-prior Brier baseline, 2022/2023/2024 fold commands, and moving-block bootstrap; matched alternatives and all outer-fold evidence remain required | Chief Systems Architect | blocks any predictive model promotion, including a quantum-branch revisit |
+| OQ-14 | **FROZEN v0.2 CONTRACT 2026-07-18** (D-026, D-028): identity-free FX residual-*level* arena with frozen entry factor basis/scale/horizon, currency-incidence and selected-factor diagnostic neutrality, actual two-regime parameter switching, graph-conditioned basket selection, conditional climatology, and exact-length circular bootstrap. All data end in burned 2024, so v0.2 is synthetic-test-only pending new post-2024 data. | Chief Systems Architect | blocks any empirical v0.2 score, predictive model promotion, and quantum-branch revisit until a new untouched holdout and matched ablations exist |
+| OQ-15 | **IMPLEMENTED CONTRACT; BLOCKED DATA 2026-07-18** (D-027): legal/regulatory event ledger, citation-time DAG validation, scenario-weighted pair-exposure vectors, and strict-after-known-time gap-safe FX event study; a timestamped primary-source corpus and entity/outcome linkage are absent | Chief Systems Architect | blocks legal-event evaluation, causal claims, and any portfolio use |
 
 ---
 
@@ -216,3 +217,5 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 | D-024 | 2026-07-18 | Pair order and 60-second gap semantics centralized in `pipeline/contracts.py`. Ten-pair kernel, MPS, reservoir, and Aer branches use the shared order contract; the quantum archive is frozen and OQ-14 is the required shared scoring gate before any predictive escalation. |
 | D-025 | 2026-07-18 | CI bootstrap repair: tracked `config/instruments.json` is now the sole import-time source for the ten-pair order. Ingestion copies it into the generated manifest, and contract tests validate generated manifest order/index agreement without requiring the data lake. |
 | D-026 | 2026-07-18 | OQ-14 causal FX regime/residual arena added in `pipeline/stat_arb.py`. It applies identity-free factor/graph estimation, a fixed causal regime filter, breakdown diagnostics, factor/net-neutral diagnostic weights, and a predeclared 30-minute residual-convergence Brier target. BID-only data blocks execution/PnL/capacity claims; the first bounded candidate failed its frozen-prior diagnostic and is not promotable. |
+| D-027 | 2026-07-18 | OQ-15 legal-event research contract added in `pipeline/legal_event.py` and `config/legal-event-schema.json`. It fails closed without immutable known-time primary-source events, validates citation availability and duplicate consistency, maps recorded scenario probabilities/exposures to diagnostic pressure, and studies only later contiguous FX responses. |
+| D-028 | 2026-07-18 | OQ-14 v0.2 contract frozen before new data ingestion. The incorrect inverse-map signal conversion and return-extreme target are retired: dual signals use `T.T @ s`, while primal factor directions use `inverse(T) @ B`; outcomes use frozen residual levels and entry-specific horizons. Diagnostic weights now impose currency-incidence `D.T @ w=0` and selected factor constraints. Regime state and graph affect actual model/entry parameters. v0.1 2024 results remain archived rejection evidence; v0.2 canonical evaluation is guarded until post-2024 data provides a new holdout. |

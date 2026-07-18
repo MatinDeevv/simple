@@ -1,108 +1,132 @@
-# Causal FX Regime and Residual Research Arena
+# Causal FX Residual-Level Research Arena
 
-`pipeline/stat_arb.py` is the first implementation of OQ-14. It is a
-classical, forecast-evaluation research arena for the only architecture in the
-proposal that matches the available data: regime-aware cross-sectional FX
-residual analysis.
+`pipeline/stat_arb.py` is a classical, causality-first research arena. It is
+not a strategy, backtest, OMS, execution model, market maker, or portfolio
+authorization system. The source is one-minute BID bars only; it has no ask,
+spread, fill, queue, borrow, impact, capacity, contract-notional, or conversion
+price data.
 
-It is not a live strategy, backtest, OMS, smart order router, market maker,
-options engine, macro nowcaster, or legal-event system. The canonical source
-contains one-minute BID bars only. It has no ask, spread, fill, queue, order
-book, borrow, impact, options-chain, macro-vintage, or legal-document data.
+## Frozen v0.2 contract
 
-## Causal flow
-
-```text
-canonical synchronous BID closes through t
-  -> valid one-minute returns, reset at each observed gap
-  -> identity-free FX transform
-  -> causal EW factor covariance and sparse partial-correlation graph
-  -> causal two-state volatility-regime filter and residual AR diagnostics
-  -> residual ranking, breakdown probability, factor/net-neutral diagnostic weights
-  -> fixed-horizon convergence probability at t
-  -> target observed only after t + 30 contiguous minutes
-  -> frozen train-prior Brier comparison and block-bootstrap interval
-```
-
-EURGBP, EURJPY, and GBPJPY are converted to triangle-residual channels before
-factor and graph estimation. Their arithmetic relationships therefore cannot be
-misreported as discovered cross-asset economic factors.
-
-## Predeclared target and gate
-
-At each eligible close, the model selects the largest absolute standardized
-identity-free residual. The binary target is whether that same residual has a
-smaller absolute standardized magnitude after 30 observed contiguous minutes.
-The target never enters feature state, regime inference, factor updates, or
-allocation construction.
-
-The primary score is Brier score against the convergence frequency frozen from
-the training partition. The reported lower 95% confidence bound is a
-deterministic moving-block bootstrap of the Brier improvement, with one-day
-blocks. A candidate needs a lower bound above zero before it has passed even
-the prediction gate. It still cannot be promoted without all predeclared 2022,
-2023, and 2024 outer folds and an independently specified execution-data
-contract.
-
-The model emits L1-normalized diagnostic weights that jointly remove current
-factor exposure and net exposure. They are not orders. With BID-only data,
-execution costs, capacity, fill probability, impact, and PnL are explicitly
-blocked rather than assumed to be zero.
-
-## Commands
+Version `stat-arb-arena-0.2.0-frozen` is fixed before obtaining new data. It is
+synthetically tested only. Its normal data CLI is guarded because all current
+canonical observations end in the already inspected 2024 holdout.
 
 ```powershell
 python pipeline\stat_arb.py --self-check
-python pipeline\stat_arb.py --max-rows 50000
-python pipeline\stat_arb.py --test-year 2022
-python pipeline\stat_arb.py --test-year 2023
-python pipeline\stat_arb.py --test-year 2024
 ```
 
-The bounded command is a development diagnostic; it is not one of the required
-calendar outer folds. A `--test-year` run loads two prior calendar years solely
-to warm causal state and scores the selected calendar year.
+`--allow-burned-holdout-research` exists only for an explicit, non-promotable
+forensic run. It must not be used to select, tune, or report a v0.2 result.
+New post-2024 data and a predeclared chronological split are required before a
+v0.2 empirical evaluation.
 
-## First bounded result
+The old `stat_arb_*` artifacts are preserved as v0.1 archive files. A later
+authorized v0.2 run writes only `stat_arb_v0_2_*` files, so it cannot overwrite
+the archive.
 
-The 50,000-row request yielded 48,653 synchronous rows from
-2024-11-12T07:30Z through 2024-12-31T21:59Z. It had 483 observed gap resets;
-the longest contiguous segment was 1,394 steps, so post-gap warmup is a
-predeclared 60 observed contiguous minutes rather than an invented session
-bridge.
+## Correct basis and portfolio mapping
 
-The fixed candidate failed its diagnostic gate:
+Let `z = T r` be the identity-free return transform. A residual signal `s` is a
+dual vector, therefore its raw-return functional is:
 
-| Predictor | OOS Brier | OOS log loss | Accuracy |
-|---|---:|---:|---:|
-| Factor/regime residual candidate | 0.397654 | 1.075137 | 44.06% |
-| Frozen training convergence prior | 0.150843 | 0.479053 | 81.49% |
+```text
+s' z = s' T r = (T' s)' r
+```
 
-The lower 95% moving-block-bootstrap bound for Brier improvement was
-`-0.278320`. This is a rejection result. It provides no trading evidence and
-does not authorize tuning, PnL construction, or another model family.
+The basket signal is consequently `T.T @ s`, not `inverse(T) @ s`.
+Factor loading columns are primal directions; their raw map remains
+`inverse(T) @ B`. Tests assert the equality above for each EURGBP, EURJPY, and
+GBPJPY triangle-residual channel over randomized returns.
 
-## 2024 outer-fold result
+The basket constraints are also explicit. `D` is the pair-by-currency incidence
+matrix: base currency `+1`, quote currency `-1`. Diagnostic weights satisfy
+`D.T @ w = 0` plus a predeclared number of factor-direction constraints. This
+is currency-incidence neutrality in pair-coefficient units, not dollar-risk
+neutrality: contract notionals and conversion prices are absent, so risk-unit
+sizing and any executable neutrality claim remain blocked.
 
-The first required calendar fold used 2022-2023 only for causal state warmup
-and scored 2024. It processed 1,071,797 synchronized rows, with 532,814
-training-target observations and 236,358 OOS targets. The fixed candidate had
-Brier `0.462652` versus `0.150255` for the frozen training prior; its lower 95%
-moving-block-bootstrap Brier-improvement bound was `-0.337775`.
+## Causal target
 
-This is another rejection. The remaining 2022 and 2023 commands are preserved
-for protocol completeness, but this 2024 outcome does not authorize tuning the
-candidate on any outer-fold result.
+v0.1 selected the largest current return residual and labelled whether a later,
+re-estimated standardized return was smaller. That was an invalid convergence
+target: it was dominated by order statistics/regression to the mean and changed
+factor loadings, scales, and basis between entry and evaluation.
+
+v0.2 maintains an identity-free standardized residual level:
+
+```text
+S_t = rho_regime S_(t-1) + e_t / sigma_t
+```
+
+At each eligible entry it freezes the selected component, factor mean/loadings,
+residual scale, level AR coefficient, diagnostic basket, holding horizon, and
+stop. Future returns are reprojected through exactly that frozen factor model.
+The primary continuous result is:
+
+```text
+gross_convergence = -sign(S_t) * (S_(t+h,frozen) - S_t)
+```
+
+The binary label requires positive gross convergence and a smaller absolute
+frozen level. Emissions also record MAE, time-to-zero, percentage displacement
+removed, breakdown, frozen-path volatility, and diagnostic turnover. A target
+is absent when even one arrival from entry through horizon is not an observed
+contiguous minute. The frozen diagnostic basket is also replayed only as a
+fixed-weight log-return diagnostic; it is not substituted for the residual
+level label and is not an executable return claim.
+
+## Actual regime and graph effects
+
+This is regime switching, not merely regime-aware scoring. A causal two-state
+posterior maintains distinct low/high covariance, factor loading, residual
+variance, and residual-AR state. The active state also changes factor refresh
+cadence, level persistence, entry threshold, holding horizon, stop multiple,
+number of neutralized factors, and diagnostic position scale.
+
+The sparse partial-correlation graph is not decorative. Its incident pressure
+and connected-cluster size penalize residual selection, enter breakdown risk,
+and reduce diagnostic position scale. The graph edge artifact records the
+active regime at each refresh.
+
+## Evaluation baselines and uncertainty
+
+All baselines are frozen from the train partition. The primary comparator is a
+conditional convergence climatology indexed by absolute residual-level bin,
+component, UTC session bucket, and regime, with predeclared sparse-cell
+fallbacks. A deterministic time-shuffled-label placebo is reported separately.
+
+The statistical interval is an exact-length circular block bootstrap confined
+within uninterrupted segments. It uses at least 2,000 replicates by default,
+reports Brier, log-loss, and calibration-improvement intervals, and records
+30-minute, 4-hour, and one-day block sensitivities. The conditional-climatology
+gate requires positive one-day lower-95% Brier improvement; it still cannot
+promote anything without executable data and a new untouched holdout.
+
+IID-residual simulation, AR(1), static-vs-dynamic PCA, and no-regime ablations
+remain required matched comparators before any empirical model comparison. They
+are not claimed as executed v0.2 results.
+
+## Archived v0.1 evidence
+
+The 50,000-row v0.1 bounded diagnostic covered 48,653 synchronous rows from
+2024-11-12T07:30Z through 2024-12-31T21:59Z. It had 483 gap resets and failed:
+Brier `0.397654` versus frozen-prior `0.150843`, with lower-95% moving-block
+Brier improvement `-0.278320`.
+
+The v0.1 2024 outer fold processed 1,071,797 synchronous rows. Its
+2022-2023 history served both to warm causal state and to establish frozen
+training baseline-label estimates; 2024 was the scored outer partition. It
+also failed: Brier `0.462652` versus `0.150255`, lower-95% improvement
+`-0.337775`. These are archived rejection evidence, not a v0.2 baseline and
+not a license to tune on 2024.
 
 ## Artifacts
 
-- `data_derived/stat_arb_*_minute.parquet`: causal emissions, residual
-  diagnostics, weights, labels, and timing.
-- `data_derived/stat_arb_*_graph.parquet`: thresholded partial-correlation
-  edges at factor refreshes.
-- `data_derived/stat_arb_*_daily.parquet`: diagnostic aggregates only.
-- `data_derived/stat_arb_*_summary.json`: target, split, baseline, bootstrap,
-  data hashes, and non-promotion status.
-
-The next authorised work is to execute and inspect all three outer folds, then
-define matched classical alternatives without looking at those test years.
+- `data_derived/stat_arb_*`: immutable v0.1 archive artifacts.
+- `data_derived/stat_arb_v0_2_*_minute.parquet`: causal v0.2 emissions,
+  frozen-target outcomes, weights, exposures, and diagnostics.
+- `data_derived/stat_arb_v0_2_*_graph.parquet`: active-regime graph edges.
+- `data_derived/stat_arb_v0_2_*_daily.parquet`: diagnostic aggregates only.
+- `data_derived/stat_arb_v0_2_*_summary.json`: target definition, data hashes,
+  baselines, bootstrap sensitivity, and non-promotion status.
