@@ -1,0 +1,15 @@
+{
+  "schema_version": "fxsim-instruments-v1",
+  "instrument_index_order": [
+    "EURUSD",
+    "USDJPY",
+    "GBPUSD",
+    "AUDUSD",
+    "USDCAD",
+    "USDCNH",
+    "USDCHF",
+    "EURGBP",
+    "EURJPY",
+    "GBPJPY"
+  ]
+}

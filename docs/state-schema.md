@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.4 |
+| **Version** | 1.5 |
 | **Status** | DRAFT — open items assigned, see §7 |
 | **Owner** | Chief Systems Architect |
 | **Date** | 2026-07-18 |
@@ -40,6 +40,9 @@ Rule of this document: every physics term is paired with a literal computable de
 ## 2. Instrument index (canonical, frozen)
 
 Index order is load-bearing for the coupling matrix `C`. Do not reorder.
+`config/instruments.json` is the tracked source of this order. The generated
+`data_canonical/manifest.json` must record the identical order and per-pair
+indices, but it is data provenance rather than application configuration.
 
 | i | Symbol | | i | Symbol |
 |---|---|---|---|---|
@@ -176,7 +179,7 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 | OQ-8 | **RESOLVED 2026-07-18** (D-016): causal reset-on-arrival for every non-60-s interval; see `docs/integrator.md` | sim-integrator | closed for the numerically safe three-pair replay |
 | OQ-9 | **REOPENED 2026-07-18** (D-023): integrator now records non-normal transient diagnostics and avoids monotonic timestep bisection, but only numerical safety is established; see `docs/integrator.md` | sim-integrator | blocks acceptance of the three-pair harmonic simulator until transient/OOS/model-identification gates are defined |
 | OQ-10 | Volume normalization across pairs/years (broker-relative units) — canonical normalized volume field spec | sim-datapipe | optional future feature; no longer blocks OQ-1 |
-| OQ-11 | ~~Ingestion spec~~ **RESOLVED 2026-07-17** (D-007): see `docs/datapipe.md` — pipeline v1.0.0, canonical zstd parquet in `data_canonical/` + `manifest.json` content hashes | sim-datapipe | — |
+| OQ-11 | ~~Ingestion spec~~ **RESOLVED 2026-07-17** (D-007): see `docs/datapipe.md` — pipeline v1.0.0, canonical zstd parquet in `data_canonical/` + generated `manifest.json` content hashes; its instrument order is validated against tracked `config/instruments.json` | sim-datapipe | — |
 | OQ-12 | Adversarial validation plan: lookahead-leak tests (§5 rule), triangle-identity leak test (§6), residual-`F` sanity bounds | sim-redteam | v1 sign-off |
 | OQ-13 | **FROZEN** experimental quantum-software representations: density filter, qutrit trajectories/tomography, ten-qutrit MPS/TEBD, ten-qubit kernel/reservoir, and Aer synthetic-noise calibration; never a claim that FX is physically quantum; see `docs/quantum-frontier.md` and `docs/quantum-redteam.md` | Chief Systems Architect | noncanonical negative-results archive: every executed predictive representation loses to a required baseline or fails convergence; no new quantum model until shared target/classical/OOS gates pass |
 | OQ-14 | Shared causal target and scoring contract: volatility-neutralized surprise/ranking and alternative distributional targets; fixed pair order, gap policy, baselines, outer folds, and block-bootstrap comparison | Chief Systems Architect | blocks any predictive model promotion, including a quantum-branch revisit |
@@ -210,4 +213,5 @@ These hold to within spread/microstructure noise (exact only for arb-free mid; w
 | D-021 | 2026-07-18 | Isolated Qiskit Aer environment added for a declared synthetic ten-qubit density-matrix noise calibration. It reports ideal-versus-noisy observables only; no provider credentials, backend calibration, hardware job, forecasting target, or promotion permission was added. |
 | D-022 | 2026-07-18 | OQ-3 reopened. The executed replay projects negative curvature in 2,565 of 3,850 configurations and 153,863 of 250,000 arrivals. This is a harmonic-model identification failure signal, not a numerical fix; no nonlinear potential has been selected. |
 | D-023 | 2026-07-18 | OQ-9 reopened. Resume now has explicit `state_index`/`next_arrival_index` semantics and split-vs-resumed regression coverage. Directional-coupling stability now logs balanced-coordinate singular value, 60-step transient growth, eigenvector conditioning, sampled unit-circle resolvent sensitivity, and non-monotonic sampled dt segments; spectral radius alone is no longer an acceptance proof. |
-| D-024 | 2026-07-18 | Pair order and 60-second gap semantics centralized in `pipeline/contracts.py`. Ten-pair kernel, MPS, reservoir, and Aer branches load the manifest order; the quantum archive is frozen and OQ-14 is the required shared scoring gate before any predictive escalation. |
+| D-024 | 2026-07-18 | Pair order and 60-second gap semantics centralized in `pipeline/contracts.py`. Ten-pair kernel, MPS, reservoir, and Aer branches use the shared order contract; the quantum archive is frozen and OQ-14 is the required shared scoring gate before any predictive escalation. |
+| D-025 | 2026-07-18 | CI bootstrap repair: tracked `config/instruments.json` is now the sole import-time source for the ten-pair order. Ingestion copies it into the generated manifest, and contract tests validate generated manifest order/index agreement without requiring the data lake. |

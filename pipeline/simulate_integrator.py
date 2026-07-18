@@ -18,13 +18,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from contracts import canonical_pair_order
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DIR = ROOT / "data_canonical"
 DERIVED_DIR = ROOT / "data_derived"
 
-PAIRS = ("EURUSD", "USDJPY", "USDCNH")
 PAIR_INDICES = (0, 1, 5)
+PAIRS = tuple(canonical_pair_order(ROOT)[index] for index in PAIR_INDICES)
 DT_NOM_S = 60.0
 DT_NOM_NS = int(DT_NOM_S * 1_000_000_000)
 DEFAULT_MAX_STEPS = 250_000

@@ -8,7 +8,7 @@ this result.
 
 ## Circuit
 
-The reservoir has one qubit per canonical manifest index, loaded at runtime:
+The reservoir has one qubit per tracked instrument-config index, loaded at runtime:
 
 EURUSD, USDJPY, GBPUSD, AUDUSD, USDCAD, USDCNH, USDCHF, EURGBP, EURJPY, GBPJPY.
 

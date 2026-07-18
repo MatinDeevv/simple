@@ -47,7 +47,7 @@ Every tier must implement the same contract before model-specific work:
 
 ```text
 input at bar close t:
-  canonical manifest/data hash; fixed pair-order; UTC timestamp
+  tracked instrument config plus canonical manifest/data hash; fixed pair-order; UTC timestamp
   x_t, valid 60-second return z_t, gap flags, and only C(u) with u <= t
   all normalizers and fitted parameters trained strictly before the scored fold
 

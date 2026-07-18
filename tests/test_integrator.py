@@ -104,3 +104,15 @@ def test_sampled_dt_report_is_not_a_monotonic_bisection_claim() -> None:
     assert report["dt_grid_samples"] == len(integrator.STABILITY_DT_GRID_S)
     assert report["dt_stable_interval_count"] >= 1
     assert report["dt_60s_spectral_pass"] is True
+
+
+def test_negative_curvature_projection_is_a_model_rejection_signal(tmp_path: Path) -> None:
+    times, actual_x, dynamics, coupling = synthetic_inputs()
+    dynamics[0]["values"][0, 1] = -1.0e-7
+    _daily, gaps, summary = integrator.replay(
+        times, actual_x, dynamics, coupling, max_steps=1,
+        checkpoint=tmp_path / "negative-kappa.json", resume=False,
+    )
+    assert summary["negative_curvature_projected_steps"] == 1
+    assert summary["negative_curvature_projected_configurations"] == 1
+    assert "MODEL_PROJECT_NEGATIVE_KAPPA_TO_ZERO" in gaps["action"].tolist()

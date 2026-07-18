@@ -15,7 +15,7 @@
 
 ## 1. Ingestion steps (exact, in order)
 
-Run: `python pipeline\ingest.py` (all 10 pairs, frozen index order per schema §2). `--pairs P1 P2 ...` ingests a subset and merges entries into the existing manifest.
+Run: `python pipeline\ingest.py` (all 10 pairs, tracked index order from `config/instruments.json` per schema §2). `--pairs P1 P2 ...` ingests a subset and merges entries into the existing manifest.
 
 Per pair `P`:
 
@@ -69,7 +69,7 @@ Raw IEEE-754 bytes were chosen over any text serialization to eliminate float-fo
 
 ## 5. Manifest format (`data_canonical/manifest.json`)
 
-Top level: `pipeline_version`, `canonical_hash_spec` (the definition string), `generated_utc` (only non-deterministic field), `environment` (python/pandas/numpy/pyarrow versions — lineage, not identity), `raw_dir`, `instrument_index_order` (frozen §2 order), `pairs`.
+Top level: `pipeline_version`, `canonical_hash_spec` (the definition string), `generated_utc` (only non-deterministic field), `environment` (python/pandas/numpy/pyarrow versions — lineage, not identity), `raw_dir`, `instrument_index_order` (copied from tracked `config/instruments.json` and validated against it), `pairs`.
 
 Per-pair entry (all fields deterministic given raw bytes + pipeline version):
 

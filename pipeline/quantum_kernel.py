@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from contracts import ContractError as SharedContractError
-from contracts import canonical_pair_order, contiguous_60s
+from contracts import canonical_pair_order, contiguous_60s, validate_generated_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,10 +87,7 @@ def sha256_array(values: np.ndarray) -> str:
 
 
 def manifest_provenance() -> dict[str, object]:
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    order = tuple(manifest.get("instrument_index_order", ()))
-    if order != PAIRS:
-        raise ContractError("canonical manifest order is not the required 10-qubit order")
+    manifest = validate_generated_manifest(ROOT)
     return {
         "manifest_sha256": sha256_file(MANIFEST_PATH),
         "canonical_data_sha256": {pair: manifest["pairs"][pair]["data_sha256"]

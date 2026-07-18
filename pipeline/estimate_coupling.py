@@ -23,12 +23,9 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from contracts import canonical_pair_order
 
-PAIRS = [
-    "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD",
-    "USDCNH", "USDCHF", "EURGBP", "EURJPY", "GBPJPY",
-]
-N_PAIRS = len(PAIRS)
+
 US_PER_MINUTE = 60_000_000
 US_PER_DAY = 86_400_000_000
 SECONDS_PER_MINUTE = 60.0
@@ -39,6 +36,8 @@ VERSION = "1.0.0"
 ROOT = Path(__file__).resolve().parent.parent
 CANONICAL_DIR = ROOT / "data_canonical"
 DEFAULT_OUT_DIR = ROOT / "data_derived"
+PAIRS = list(canonical_pair_order(ROOT))
+N_PAIRS = len(PAIRS)
 
 
 @dataclass

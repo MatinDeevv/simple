@@ -44,6 +44,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from contracts import canonical_pair_order
+
 # --------------------------------------------------------------------------
 # Constants (frozen)
 # --------------------------------------------------------------------------
@@ -56,15 +58,12 @@ CANONICAL_HASH_SPEC = (
     " order, same row order )"
 )
 
-# Frozen instrument index order -- state-schema.md section 2. Load-bearing.
-PAIRS = [
-    "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD",
-    "USDCNH", "USDCHF", "EURGBP", "EURJPY", "GBPJPY",
-]
-
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "dukascopy_data"
 OUT_DIR = ROOT / "data_canonical"
+
+# The tracked configuration, not generated data, defines this load-bearing order.
+PAIRS = list(canonical_pair_order(ROOT))
 
 TS_FORMAT = "%Y-%m-%d %H:%M:%S%z"          # strict; any deviant row raises
 TS_MIN = pd.Timestamp("2015-01-01 00:00:00", tz="UTC")   # inclusive
