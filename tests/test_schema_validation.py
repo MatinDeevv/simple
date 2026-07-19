@@ -86,6 +86,18 @@ def test_validate_instance_enforces_enum() -> None:
     assert any("predicted_direction" in error for error in errors)
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_numbers_are_rejected(value: float) -> None:
+    assert sv.validate_instance({"type": "object", "properties": {"x": {"type": "number"}}, "required": ["x"]}, {"x": value})
+
+
+def test_integer_rejects_bool_and_accepts_finite_numpy_scalar() -> None:
+    schema = {"type": "array", "items": {"type": ["integer", "null"]}}
+    assert sv.validate_instance(schema, [True])
+    assert sv.validate_instance(schema, [np.int64(3), None]) == []
+    assert sv.validate_instance({"type": "number"}, np.float64(1.5)) == []
+
+
 def test_real_run_manifest_validates_against_its_schema(tmp_path: Path) -> None:
     import subprocess
     subprocess.run(["git", "-c", "user.email=t@e.com", "-c", "user.name=t", "init", "-q"],

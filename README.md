@@ -23,7 +23,9 @@ Use Python 3.11 for core research and tests:
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements-core.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements-core.txt
+python -m pip install -e .
 ```
 
 Qiskit Aer noise calibration has its own environment:
@@ -46,6 +48,19 @@ python -m engine.models.events.legal_event --self-check
 ```
 
 CI runs the test suite and numerical self-checks on every push and pull request.
+
+Editable installation is development-only. The reproducibility proof is an
+isolated wheel installation, not importing from this checkout:
+
+```powershell
+python -m build --wheel
+python -m pip install dist/<wheel>
+auractl --help
+auractl stat-arb --self-check
+```
+
+There are no execution data and no profitability claim. Quantum modules remain
+a frozen negative-result research archive, outside the core dependency set.
 
 ## Canonical contracts
 

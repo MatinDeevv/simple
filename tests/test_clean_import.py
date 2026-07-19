@@ -35,13 +35,13 @@ def test_clean_checkout_does_not_track_generated_data_directories() -> None:
         assert (clean_dir / "engine" / "core" / "contracts.py").exists()
 
 
-@pytest.mark.parametrize("module_name", [
-    *verify_repository.CLEAN_IMPORT_MODULES,
-])
-def test_module_is_present_in_clean_checkout_module_list(module_name: str) -> None:
+def test_module_list_is_discovered_from_exported_tree() -> None:
     with tempfile.TemporaryDirectory(prefix="test_clean_import_") as tmp:
         clean_dir = Path(tmp) / "clean_checkout"
         clean_dir.mkdir()
         verify_repository._export_clean_checkout(clean_dir)
-        package, leaf = module_name.rsplit(".", 1)
-        assert (clean_dir / package.replace(".", "/") / f"{leaf}.py").is_file()
+        modules = verify_repository._discover_clean_import_modules(clean_dir)
+        assert modules
+        for module_name in modules:
+            package, leaf = module_name.rsplit(".", 1)
+            assert (clean_dir / package.replace(".", "/") / f"{leaf}.py").is_file()

@@ -40,6 +40,7 @@ jobs:
           cache-dependency-path: requirements-core.txt
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-core.txt
+      - run: python -m pip install .
       - name: byte-compile engine and tests
         run: python -m compileall -q engine tests
       - name: shared instrument/timestamp contract tests
@@ -70,6 +71,7 @@ jobs:
           cache-dependency-path: requirements-core.txt
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-core.txt
+      - run: python -m pip install .
       - name: pytest (full suite)
         run: |
           mkdir -p artifacts
@@ -98,6 +100,7 @@ jobs:
           cache-dependency-path: requirements-core.txt
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-core.txt
+      - run: python -m pip install .
       - name: simulate_integrator self-check
         run: |
           mkdir -p artifacts
@@ -198,8 +201,9 @@ jobs:
           cache-dependency-path: requirements-core.txt
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-core.txt
+      - run: python -m pip install .
       - name: local repository verification
-        run: python -m engine.tools.verify_repository
+        run: python -m engine.tools.verify_repository --tree head
       - name: audit tests (clean import, duplicate pair order, evaluation protocol, run manifest, schemas)
         run: |
           mkdir -p artifacts
@@ -212,5 +216,34 @@ jobs:
         with:
           name: repository-audit-results
           path: artifacts/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  installed-package-smoke:
+    name: installed-package-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip build
+      - name: build, inspect, and install wheel outside checkout
+        run: |
+          mkdir -p artifacts
+          python -m engine.tools.verify_installed_package | tee artifacts/installed-package-receipt.json
+          sha256sum dist/*.whl | tee artifacts/wheel.sha256
+          unzip -l dist/*.whl | tee artifacts/wheel-contents.txt
+      - name: upload wheel and receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-package-smoke-receipts
+          path: |
+            dist/*.whl
+            artifacts/
           retention-days: 14
           if-no-files-found: ignore
