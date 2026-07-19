@@ -49,7 +49,7 @@ jobs:
           python -m pytest tests/test_contracts.py -q --junitxml=artifacts/core-contracts.xml
       - name: upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: core-contracts-results
           path: artifacts/
@@ -78,7 +78,7 @@ jobs:
           python -m pytest tests -q --junitxml=artifacts/core-tests.xml
       - name: upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: core-tests-results
           path: artifacts/
@@ -111,7 +111,7 @@ jobs:
         run: python -m engine.models.events.legal_event --self-check | tee artifacts/legal_event_self_check.json
       - name: upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: research-self-checks-results
           path: artifacts/
@@ -146,7 +146,7 @@ jobs:
           python -m engine.quantum.quantum_reservoir --self-check | tee artifacts/quantum_reservoir_self_check.json
       - name: upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: quantum-archive-results
           path: artifacts/
@@ -175,7 +175,7 @@ jobs:
           python -m engine.quantum.quantum_aer_noise --self-check | tee artifacts/quantum_aer_noise_self_check.json
       - name: upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: quantum-aer-results
           path: artifacts/
@@ -212,7 +212,7 @@ jobs:
             tests/test_reproducibility_contracts.py -q --junitxml=artifacts/repository-audit.xml
       - name: upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: repository-audit-results
           path: artifacts/
@@ -239,7 +239,7 @@ jobs:
           unzip -l dist/*.whl | tee artifacts/wheel-contents.txt
       - name: upload wheel and receipts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installed-package-smoke-receipts
           path: |
