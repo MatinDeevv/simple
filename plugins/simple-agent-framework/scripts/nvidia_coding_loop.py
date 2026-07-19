@@ -10,7 +10,10 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
+import hashlib
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -22,6 +25,8 @@ DEFAULT_MODELS = (
 )
 MAX_CONTEXT_BYTES = 160_000
 MAX_PATCH_BYTES = 250_000
+MAX_RESPONSE_BYTES = 2_000_000
+DEFAULT_TIMEOUT_SECONDS = 180
 SECRET_PATTERN = re.compile(
     r"(?i)(nvapi-[A-Za-z0-9_-]+|(?:api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+)"
 )
@@ -35,6 +40,32 @@ class EngineError(RuntimeError):
 class Completion:
     model: str
     content: str
+
+
+def validate_endpoint(endpoint: str) -> str:
+    """Return the canonical NVIDIA endpoint or fail closed."""
+    try:
+        parsed = urllib.parse.urlsplit(endpoint)
+        port = parsed.port
+    except ValueError as exc:
+        raise EngineError("NVIDIA endpoint is malformed") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "integrate.api.nvidia.com"
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path.rstrip("/") != "/v1"
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise EngineError("NVIDIA endpoint violates the pinned endpoint policy")
+    return DEFAULT_ENDPOINT
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
 
 
 def redact(text: str) -> str:
@@ -60,14 +91,22 @@ class NvidiaClient:
         api_key: str,
         endpoint: str = DEFAULT_ENDPOINT,
         models: Sequence[str] = DEFAULT_MODELS,
-        request: Callable[..., Any] = urllib.request.urlopen,
+        request: Callable[..., Any] | None = None,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+        seed: int | None = 0,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
         if not api_key:
             raise EngineError("NVIDIA_API_KEY is missing")
         self.api_key = api_key
-        self.endpoint = endpoint.rstrip("/")
+        self.endpoint = validate_endpoint(endpoint)
         self.models = tuple(models)
-        self.request = request
+        self.request = request or urllib.request.build_opener(_NoRedirect()).open
+        self.temperature = temperature
+        self.top_p = top_p
+        self.seed = seed
+        self.timeout_seconds = timeout_seconds
 
     def complete(self, system: str, user: str, max_tokens: int = 8192) -> Completion:
         errors: list[str] = []
@@ -79,10 +118,12 @@ class NvidiaClient:
                     {"role": "user", "content": redact(user)},
                 ],
                 "max_tokens": max_tokens,
-                "temperature": 1.0,
-                "top_p": 0.95,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
                 "stream": False,
             }
+            if self.seed is not None:
+                payload["seed"] = self.seed
             request = urllib.request.Request(
                 f"{self.endpoint}/chat/completions",
                 data=json.dumps(payload).encode("utf-8"),
@@ -94,8 +135,14 @@ class NvidiaClient:
                 method="POST",
             )
             try:
-                with self.request(request, timeout=180) as response:
-                    body = json.loads(response.read().decode("utf-8"))
+                with self.request(request, timeout=self.timeout_seconds) as response:
+                    try:
+                        raw = response.read(MAX_RESPONSE_BYTES + 1)
+                    except TypeError:  # Minimal test doubles may not accept a size.
+                        raw = response.read()
+                    if len(raw) > MAX_RESPONSE_BYTES:
+                        raise EngineError("NVIDIA response exceeds the configured byte limit")
+                    body = json.loads(raw.decode("utf-8"))
                 return Completion(model=model, content=body["choices"][0]["message"]["content"])
             except urllib.error.HTTPError as exc:
                 errors.append(f"{model}: HTTP {exc.code}")
@@ -145,21 +192,60 @@ def repository_context(root: Path, context_paths: Sequence[str]) -> str:
     return result
 
 
-def validate_patch(patch: str) -> None:
+def _patch_paths(patch: str) -> set[str]:
+    paths: set[str] = set()
+    patterns = (
+        r"^diff --git a/(.+?) b/(.+?)$", r"^--- (?:a/)?(.+)$", r"^\+\+\+ (?:b/)?(.+)$",
+        r"^rename from (.+)$", r"^rename to (.+)$", r"^copy from (.+)$", r"^copy to (.+)$",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, patch, flags=re.M):
+            for raw in match.groups():
+                if raw != "/dev/null":
+                    paths.add(raw.strip())
+    return paths
+
+
+def _path_allowed(path: str, allowed_paths: Sequence[str], allowed_prefixes: Sequence[str]) -> bool:
+    normalized = Path(path).as_posix()
+    return normalized in {Path(value).as_posix() for value in allowed_paths} or any(
+        normalized.startswith(Path(prefix).as_posix().rstrip("/") + "/") for prefix in allowed_prefixes
+    )
+
+
+def validate_patch(
+    patch: str,
+    allowed_paths: Sequence[str] = (),
+    allowed_prefixes: Sequence[str] = (),
+    *,
+    allow_mode_changes: bool = False,
+) -> None:
     encoded = patch.encode("utf-8")
     if not patch.startswith("diff --git ") or len(encoded) > MAX_PATCH_BYTES:
         raise EngineError("model patch is missing or exceeds the byte limit")
-    for match in re.finditer(r"^diff --git a/(.+?) b/(.+?)$", patch, flags=re.M):
-        for raw in match.groups():
-            path = Path(raw)
-            if path.is_absolute() or ".." in path.parts or path.parts[:1] == (".git",):
-                raise EngineError(f"unsafe patch path: {raw}")
+    if not allowed_paths and not allowed_prefixes:
+        raise EngineError("patch validation requires an explicit allowed scope")
+    forbidden_markers = ("GIT binary patch", "Binary files ", "rename from ", "rename to ", "copy from ", "copy to ", "new file mode 120000", "new file mode 160000")
+    if any(marker in patch for marker in forbidden_markers):
+        raise EngineError("unsupported binary, link, submodule, rename, or copy patch")
+    if not allow_mode_changes and re.search(r"^(?:old|new|deleted file) mode ", patch, flags=re.M):
+        raise EngineError("file-mode changes require explicit permission")
+    paths = _patch_paths(patch)
+    if not paths:
+        raise EngineError("patch contains no parseable paths")
+    for raw in paths:
+        path = Path(raw)
+        if path.is_absolute() or ".." in path.parts or path.parts[:1] == (".git",):
+            raise EngineError(f"unsafe patch path: {raw}")
+        if allowed_paths or allowed_prefixes:
+            if not _path_allowed(raw, allowed_paths, allowed_prefixes):
+                raise EngineError(f"patch path is outside the allowed scope: {raw}")
     if SECRET_PATTERN.search(patch):
         raise EngineError("model patch appears to contain a secret")
 
 
-def apply_patch(root: Path, patch: str) -> None:
-    validate_patch(patch)
+def apply_patch(root: Path, patch: str, allowed_paths: Sequence[str] = (), allowed_prefixes: Sequence[str] = ()) -> None:
+    validate_patch(patch, allowed_paths, allowed_prefixes)
     check = _git(root, "apply", "--check", "--whitespace=error-all", "-", input_text=patch)
     if check.returncode:
         raise EngineError("git apply --check failed: " + redact(check.stderr.strip()))
@@ -173,7 +259,10 @@ def run_tests(root: Path, commands: Sequence[Sequence[str]]) -> tuple[bool, str]
     for command in commands:
         if not command:
             continue
-        proc = subprocess.run(command, cwd=root, text=True, capture_output=True, check=False, timeout=900)
+        try:
+            proc = subprocess.run(command, cwd=root, text=True, capture_output=True, check=False, timeout=900)
+        except subprocess.TimeoutExpired as exc:
+            raise EngineError(f"test command timed out: {' '.join(command)}") from exc
         transcript = redact((proc.stdout + "\n" + proc.stderr).strip())[-20_000:]
         output.append(f"$ {' '.join(command)}\nexit={proc.returncode}\n{transcript}")
         if proc.returncode:
@@ -194,6 +283,8 @@ def coding_loop(
     context_paths: Sequence[str],
     test_commands: Sequence[Sequence[str]],
     retries: int,
+    allowed_paths: Sequence[str] = (),
+    allowed_prefixes: Sequence[str] = (),
 ) -> dict[str, Any]:
     validate_worktree(root)
     context = repository_context(root, context_paths)
@@ -208,7 +299,7 @@ def coding_loop(
         f"Implement the task as one minimal patch.\nTASK:\n{task}\nPLAN:\n{json.dumps(plan_json)}\n\n{context}",
     )
     build_json = _json_object(build.content)
-    apply_patch(root, str(build_json.get("patch", "")))
+    apply_patch(root, str(build_json.get("patch", "")), allowed_paths, allowed_prefixes)
 
     attempts = 0
     while True:
@@ -223,12 +314,16 @@ def coding_loop(
             f"TASK:\n{task}\nTEST OUTPUT:\n{transcript}\nDIFF:\n{_git(root, 'diff').stdout}",
         )
         repair_json = _json_object(repair.content)
-        apply_patch(root, str(repair_json.get("patch", "")))
+        apply_patch(root, str(repair_json.get("patch", "")), allowed_paths, allowed_prefixes)
         attempts += 1
 
     diff = _git(root, "diff", "--check")
     if diff.returncode:
         raise EngineError("git diff --check failed: " + redact(diff.stdout + diff.stderr))
+    changed = {line for line in _git(root, "diff", "--name-only").stdout.splitlines() if line}
+    for path in changed:
+        if (allowed_paths or allowed_prefixes) and not _path_allowed(path, allowed_paths, allowed_prefixes):
+            raise EngineError(f"applied change escaped the allowed scope: {path}")
     review = client.complete(
         "You are a strict code reviewer. Return only JSON: "
         '{"approved":true|false,"findings":["..."]}. Never approve secrets or unrelated files.',
@@ -238,14 +333,19 @@ def coding_loop(
     review_json = _json_object(review.content)
     if review_json.get("approved") is not True:
         raise EngineError("review rejected the change: " + json.dumps(review_json.get("findings", [])))
+    independent = review.model != build.model
     return {
-        "status": "approved",
+        "status": "tests_passed",
         "planner_model": plan.model,
         "builder_model": build.model,
         "reviewer_model": review.model,
         "repair_attempts": attempts,
         "summary": build_json.get("summary", ""),
         "findings": review_json.get("findings", []),
+        "tests_passed": True,
+        "advisory_review_passed": True,
+        "independent_review_passed": independent,
+        "human_review_required": not independent,
     }
 
 
@@ -263,14 +363,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--context", action="append", default=[])
     parser.add_argument("--test", action="append", type=_command, required=True)
     parser.add_argument("--retries", type=int, choices=range(0, 3), default=2)
+    parser.add_argument("--allow-path", action="append", default=[])
+    parser.add_argument("--allow-prefix", action="append", default=[])
+    parser.add_argument("--receipt-dir", type=Path)
     args = parser.parse_args(argv)
     models = tuple(filter(None, os.getenv("NVIDIA_MODELS", ",".join(DEFAULT_MODELS)).split(",")))
+    if not args.allow_path and not args.allow_prefix:
+        parser.error("at least one --allow-path or --allow-prefix is required")
     try:
         result = coding_loop(
             NvidiaClient(os.getenv("NVIDIA_API_KEY", ""), os.getenv("NVIDIA_BASE_URL", DEFAULT_ENDPOINT), models),
             args.worktree.resolve(), args.task, args.context, args.test, args.retries,
+            args.allow_path, args.allow_prefix,
         )
     except EngineError as exc:
+        if args.receipt_dir:
+            args.receipt_dir.mkdir(parents=True,exist_ok=True)
+            stamp=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            diff=_git(args.worktree.resolve(),"diff").stdout
+            patch_path=args.receipt_dir/f"nvidia-failure-{stamp}.patch"
+            patch_path.write_text(redact(diff),encoding="utf-8")
+            category="test_failure" if "tests failed" in str(exc) else "timeout" if "timed out" in str(exc) else "invalid_patch" if "patch" in str(exc) else "api_or_policy_failure"
+            receipt={"receipt_version":"nvidia-coding-failure-v1","status":"failed","category":category,"head":_git(args.worktree.resolve(),"rev-parse","HEAD").stdout.strip(),"modified_paths":_git(args.worktree.resolve(),"diff","--name-only").stdout.splitlines(),"patch_path":patch_path.name,"patch_sha256":hashlib.sha256(patch_path.read_bytes()).hexdigest(),"created_at_utc":datetime.now(timezone.utc).isoformat(),"rollback_command":"git diff --binary > preserved.patch; review, then restore owned paths explicitly"}
+            receipt["receipt_sha256"]=hashlib.sha256(json.dumps(receipt,sort_keys=True,separators=(",",":"),allow_nan=False).encode()).hexdigest()
+            (args.receipt_dir/f"nvidia-failure-{stamp}.json").write_text(json.dumps(receipt,sort_keys=True,indent=2,allow_nan=False)+"\n",encoding="utf-8")
         print(json.dumps({"status": "failed", "error": redact(str(exc))}), file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2))

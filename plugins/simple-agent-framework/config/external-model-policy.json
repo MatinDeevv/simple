@@ -1,0 +1,10 @@
+{
+  "policy_version": "simple-external-model-policy-v1",
+  "nvidia_endpoint": "https://integrate.api.nvidia.com/v1",
+  "redirects_allowed": false,
+  "custom_endpoint_allowed": false,
+  "explicit_patch_scope_required": true,
+  "automatic_commit_allowed": false,
+  "automatic_push_allowed": false,
+  "same_model_review_is_independent": false
+}

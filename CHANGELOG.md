@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - GitHub community health files: issue templates, PR template, SECURITY, FUNDING, CODEOWNERS.
 - Visual gallery in README with selected quantum archive figures.
 - Docs: ARCHITECTURE, ROADMAP, API reference, FAQ.
-- GitHub Pages workflow for documentation site.
+- Repository documentation and public-link corrections; no GitHub Pages deployment is claimed.
 
 ### Changed
 

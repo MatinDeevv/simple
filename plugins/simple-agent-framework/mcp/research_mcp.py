@@ -3,6 +3,8 @@ from __future__ import annotations
 import json, os, re, sys, urllib.parse, urllib.request, subprocess, hashlib
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]; REPO=ROOT.parents[1]; CORPUS=ROOT/"references"/"seed-papers.json"; TIMEOUT=int(os.getenv("SIMPLE_RESEARCH_TIMEOUT_SECONDS","15"))
+sys.path.insert(0,str(ROOT/"scripts"))
+from receipt_contract import ReceiptError, verify as verify_receipt
 TOOLS=[
  {"name":"research_search_papers","description":"Search Crossref papers. Read-only; returns DOI, title, year, venue.","inputSchema":{"type":"object","properties":{"query":{"type":"string","minLength":3},"limit":{"type":"integer","minimum":1,"maximum":20}},"required":["query"]}},
  {"name":"research_seed_library","description":"Return curated FX/causality/backtest papers and use-boundaries.","inputSchema":{"type":"object","properties":{"topic":{"type":"string"}},"additionalProperties":False}},
@@ -109,12 +111,9 @@ def call(name:str,args:dict)->dict:
    receipts=[]
    for p in sorted((REPO/".agents"/"receipts").glob("*.json"),reverse=True)[:int(args.get("limit",20))]:
     try:
-     item=json.loads(p.read_text(encoding="utf-8-sig")); claimed=item.pop("receipt_sha256",None)
-     item["receipt_hash_verified"]=isinstance(claimed,str) and hashlib.sha256(json.dumps(item,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode()).hexdigest()==claimed
-     log=REPO/".agents"/"receipts"/str(item.get("log_path", ""))
-     item["log_hash_verified"]=log.is_file() and item.get("log_sha256")==hashlib.sha256(log.read_bytes()).hexdigest()
+     item=verify_receipt(p); item["receipt_hash_verified"]=True; item["receipt_version_supported"]=True; item["log_hash_verified"]=True
      receipts.append(item)
-    except Exception: receipts.append({"file":p.name,"error":"invalid JSON"})
+    except (ReceiptError,OSError,ValueError) as exc: receipts.append({"file":p.name,"error":str(exc)})
    return result(receipts)
   if name=="agent_tool_health":
    hooks=Path.home()/".codex"/"hooks.json"; hook_state="missing" if not hooks.exists() else ("empty" if json.loads(hooks.read_text()).get("hooks")=={} else "configured")
