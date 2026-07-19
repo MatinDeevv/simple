@@ -60,6 +60,7 @@ from engine.experiments.canonical import (
 from engine.experiments.errors import (
     AuditIntegrityError,
     CanonicalJsonError,
+    EvidenceValidationError,
     InvalidStateTransitionError,
     LockError,
     PathSecurityError,
@@ -80,6 +81,8 @@ EVIDENCE_FILE = "evidence.json"
 VERDICT_FILE = "verdict.json"
 SCORECARD_FILE = "scorecard.json"
 VERIFICATION_FILE = "verification.json"
+REGISTRY_RECONCILIATION_FILE = "registry-reconciliation.json"
+SNAPSHOT_META_FILE = "snapshot-meta.json"
 REPORT_FILE = "report.md"
 STATE_FILE = "state.json"
 AUDIT_FILE = "audit.jsonl"
@@ -97,6 +100,8 @@ _SCHEMA_FOR_FILE = {
 _ALLOWED_SNAPSHOT_FILES = frozenset({
     PLAN_FILE, SEAL_FILE, BINDING_FILE, EVIDENCE_FILE, VERDICT_FILE,
     SCORECARD_FILE, VERIFICATION_FILE, REPORT_FILE, STATE_FILE, AUDIT_FILE,
+    REGISTRY_RECONCILIATION_FILE,
+    SNAPSHOT_META_FILE,
 })
 
 
@@ -205,12 +210,31 @@ def _next_version_name(experiment_dir: Path) -> str:
     return f"v{highest + 1:06d}"
 
 
+def _snapshot_sha256(files: dict[str, bytes]) -> str:
+    return sha256_payload({name: sha256_bytes(content)
+                           for name, content in sorted(files.items())})
+
+
 def _publish_version(experiment_dir: Path, files: dict[str, bytes]) -> str:
     """Write a fully validated snapshot and atomically make it authoritative."""
     experiment_dir = Path(experiment_dir)
     versions_root = experiment_dir / VERSIONS_DIR
     versions_root.mkdir(parents=True, exist_ok=True)
 
+    version_name = _next_version_name(experiment_dir)
+    previous_version = current_version_name(experiment_dir)
+    previous_hash = None
+    if previous_version is not None:
+        previous_hash = _snapshot_sha256(_read_snapshot(
+            experiment_dir / VERSIONS_DIR / previous_version))
+    payload_hash = _snapshot_sha256({name: content for name, content in files.items()
+                                     if name != SNAPSHOT_META_FILE})
+    meta = {"snapshot_meta_version": "edge-tribunal-snapshot-meta-v1",
+            "version": version_name, "previous_version": previous_version,
+            "previous_snapshot_sha256": previous_hash,
+            "snapshot_payload_sha256": payload_hash}
+    meta["snapshot_meta_sha256"] = sha256_payload(meta)
+    files = dict(files, **{SNAPSHOT_META_FILE: strict_json_text(meta).encode("utf-8")})
     # Validate the snapshot before anything touches disk in its final home.
     events = [load_strict_json_text(line)
               for line in files[AUDIT_FILE].decode("utf-8").splitlines() if line.strip()]
@@ -222,7 +246,6 @@ def _publish_version(experiment_dir: Path, files: dict[str, bytes]) -> str:
         if filename.endswith(".json"):
             _validate_file_schema(filename, load_strict_json_text(content.decode("utf-8")))
 
-    version_name = _next_version_name(experiment_dir)
     final_dir = versions_root / version_name
     staging_dir = versions_root / f".staging-{version_name}-{uuid.uuid4().hex}"
     renamed = False
@@ -435,10 +458,36 @@ def bind_data(
     actor: str = "researcher",
     timestamp_utc: str | None = None,
     declare_forensic_reuse: bool = False,
+    physical_file_bindings: list[dict[str, Any]] | None = None,
+    dataset_root: Path | None = None,
 ) -> dict[str, Any]:
     """Bind the exact dataset after sealing, claiming its holdout interval."""
     experiment_dir = Path(experiment_dir)
     timestamp_utc = timestamp_utc or _now_utc()
+    if physical_file_bindings is not None:
+        if dataset_root is None:
+            raise dataset_binding.DatasetBindingError(
+                "dataset_root is required with physical_file_bindings")
+        from engine.experiments.artifact_binding import bind_physical_files
+        verified = bind_physical_files(
+            physical_file_bindings, allowed_root=dataset_root,
+            error_type=dataset_binding.DatasetBindingError)
+        by_path = {item["logical_path"]: item for item in verified}
+        dataset_manifest = dict(dataset_manifest)
+        files: list[dict[str, Any]] = []
+        for item in dataset_manifest.get("files", []):
+            logical = normalize_logical_path(item["logical_path"])
+            if logical not in by_path:
+                raise dataset_binding.DatasetBindingError(
+                    f"no physical binding supplied for {logical}")
+            computed = by_path[logical]
+            if item.get("sha256") != computed["sha256"]:
+                raise dataset_binding.DatasetBindingError(f"hash mismatch for {logical}")
+            files.append(dict(item, size_bytes=computed["size_bytes"]))
+        if set(by_path) != {normalize_logical_path(item["logical_path"]) for item in files}:
+            raise dataset_binding.DatasetBindingError("unexpected physical dataset binding")
+        dataset_manifest["files"] = files
+        dataset_manifest["dataset_bytes_verified"] = True
     with _ExperimentLock(experiment_dir):
         state_machine.require_state(current_state(experiment_dir), state_machine.SEALED,
                                     operation="bind-data")
@@ -458,7 +507,7 @@ def bind_data(
                 "claimed):\n- " + "\n- ".join(mismatches))
         claim = holdout_registry.claim_holdout(
             registry_root,
-            dataset_fingerprint=sha256_payload(dataset_manifest),
+            dataset_fingerprint=dataset_binding.dataset_content_fingerprint(dataset_manifest),
             universe=contract["universe"],
             interval_start_utc=contract["untouched_evaluation_start_utc"],
             interval_end_utc=contract["untouched_evaluation_end_utc"],
@@ -482,14 +531,24 @@ def bind_data(
         if claim["status"] == holdout_registry.FORENSIC_REUSE:
             informational.append(("FORENSIC_REUSE_DECLARED",
                                   {"holdout_id": claim["holdout_id"]}))
-        files = _transition_files(
-            experiment_dir, operation="bind-data",
-            new_artifacts={BINDING_FILE: strict_json_text(binding).encode("utf-8")},
-            informational_events=informational,
-            transition_event_type="DATASET_BOUND",
-            transition_payload={"binding_sha256": binding["binding_sha256"]},
-            actor=actor, timestamp_utc=timestamp_utc)
-        _publish_version(experiment_dir, files)
+        try:
+            files = _transition_files(
+                experiment_dir, operation="bind-data",
+                new_artifacts={BINDING_FILE: strict_json_text(binding).encode("utf-8")},
+                informational_events=informational,
+                transition_event_type="DATASET_BOUND",
+                transition_payload={"binding_sha256": binding["binding_sha256"]},
+                actor=actor, timestamp_utc=timestamp_utc)
+            _publish_version(experiment_dir, files)
+        except BaseException:
+            # Compensate only a claim minted by this attempt.  Idempotently
+            # recovered claims may belong to a prior interrupted publication.
+            if not claim.get("idempotent"):
+                holdout_registry.release_claim_if_owned(
+                    registry_root, holdout_id=claim["holdout_id"],
+                    experiment_id=plan["identity"]["experiment_id"],
+                    plan_sha256=seal["plan_sha256"])
+            raise
         return binding
 
 
@@ -499,6 +558,11 @@ def record_evidence(
     *,
     actor: str = "researcher",
     timestamp_utc: str | None = None,
+    artifact_bindings: list[dict[str, Any]] | None = None,
+    artifact_root: Path | None = None,
+    evaluation_rows_logical_path: str | None = None,
+    robustness_rows_logical_path: str | None = None,
+    test_receipts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Ingest and fully validate the structured evidence bundle."""
     experiment_dir = Path(experiment_dir)
@@ -511,8 +575,134 @@ def record_evidence(
         binding = load_artifact(experiment_dir, BINDING_FILE)
         _verify_seal_integrity(seal)
         _verify_plan_unmutated(plan, seal)
+        payload = dict(evidence_payload)
+        if "independent_verification" in payload:
+            raise EvidenceValidationError(
+                "independent_verification is Tribunal-generated and may not be supplied")
+        if artifact_bindings is not None:
+            if (artifact_root is None or evaluation_rows_logical_path is None
+                    or robustness_rows_logical_path is None):
+                raise EvidenceValidationError(
+                    "artifact_root, evaluation_rows_logical_path, and "
+                    "robustness_rows_logical_path are required")
+            from engine.experiments.artifact_binding import bind_physical_files
+            from engine.experiments.evaluation_rows import load_evaluation_rows
+            from engine.experiments.evidence_recompute import (
+                deterministic_block_bootstrap, recompute)
+            verified = bind_physical_files(artifact_bindings, allowed_root=artifact_root)
+            row_logical = normalize_logical_path(evaluation_rows_logical_path)
+            raw_by_logical = {normalize_logical_path(item["logical_path"]): item
+                              for item in artifact_bindings}
+            if row_logical not in raw_by_logical:
+                raise EvidenceValidationError("evaluation-row artifact binding is missing")
+            robustness_logical = normalize_logical_path(robustness_rows_logical_path)
+            if robustness_logical not in raw_by_logical:
+                raise EvidenceValidationError("robustness-row artifact binding is missing")
+            rows = load_evaluation_rows(
+                Path(raw_by_logical[row_logical]["physical_path"]),
+                class_order=plan["target_contract"]["class_order"],
+                allowed_policies=plan["entry_policy_contract"]["sensitivity_populations"],
+                allowed_boundaries=plan["entry_policy_contract"]["split_boundary_policies"],
+                duplicate_policy=("reject" if "reject" in
+                                  plan["data_contract"]["duplicate_row_policy"].lower()
+                                  else plan["data_contract"]["duplicate_row_policy"]))
+            calculated = recompute(rows, class_order=plan["target_contract"]["class_order"])
+            comparisons = {
+                "accepted_rows": payload["population"]["accepted_rows"],
+                "class_counts": payload["population"]["class_counts"],
+                "model_brier": payload["primary_model"]["multiclass_brier"],
+                "comparator_brier": payload["primary_comparator"]["multiclass_brier"],
+                "brier_improvement": payload["primary_model"]["brier_improvement"],
+                "model_log_loss": payload["primary_model"]["multiclass_log_loss"],
+                "comparator_log_loss": payload["primary_comparator"]["multiclass_log_loss"],
+                "log_loss_improvement": payload["primary_model"]["log_loss_improvement"],
+            }
+            from engine.experiments.evidence_recompute import assert_summary_matches
+            assert_summary_matches(
+                {key: calculated[key] for key in comparisons}, comparisons,
+                tolerance=1e-10)
+            concentration_keys = [key for key in calculated if key.startswith("largest_")]
+            assert_summary_matches(
+                {key: calculated[key] for key in concentration_keys},
+                {key: payload["concentration"][key] for key in concentration_keys},
+                tolerance=1e-10)
+            uncertainty = plan["uncertainty_contract"]
+            bounds_by_block = {str(block): deterministic_block_bootstrap(
+                rows, class_order=plan["target_contract"]["class_order"],
+                block_length=block, replicate_count=uncertainty["replicate_count"],
+                seed=uncertainty["random_seed"],
+                confidence_level=uncertainty["one_sided_confidence"],
+                two_sided_confidence_level=uncertainty["two_sided_confidence"])
+                for block in uncertainty["block_sizes"]}
+            bound_mapping = {
+                "brier_lower_one_sided": "brier_improvement_lower_bound_one_sided",
+                "brier_lower_two_sided": "brier_improvement_lower_bound_two_sided",
+                "brier_upper_two_sided": "brier_improvement_upper_bound_two_sided",
+                "log_loss_lower_one_sided": "log_loss_improvement_lower_bound_one_sided",
+                "log_loss_lower_two_sided": "log_loss_improvement_lower_bound_two_sided",
+                "log_loss_upper_two_sided": "log_loss_improvement_upper_bound_two_sided",
+            }
+            submitted_by_block = payload["primary_model"].get("bootstrap_by_block_length")
+            if not isinstance(submitted_by_block, dict) or set(submitted_by_block) != set(bounds_by_block):
+                raise EvidenceValidationError(
+                    "every preregistered bootstrap block length must be reported")
+            for block, bounds in bounds_by_block.items():
+                assert_summary_matches(
+                    bounds, {key: submitted_by_block[block][submitted]
+                             for key, submitted in bound_mapping.items()}, tolerance=1e-10)
+            if not test_receipts:
+                raise EvidenceValidationError(
+                    "physical test receipts are required for independent verification")
+            from engine.experiments.test_receipts import verify_test_receipt
+            required_commands = plan["code_contract"]["required_test_commands"]
+            if len(test_receipts) != len(required_commands):
+                raise EvidenceValidationError("physical receipts must exactly cover sealed commands")
+            receipt_results = [verify_test_receipt(
+                Path(item["receipt_path"]), Path(item["log_path"]),
+                expected_commit=plan["code_contract"]["commit_sha"],
+                required_command=command, now_utc=timestamp_utc)
+                for item, command in zip(test_receipts, required_commands)]
+            from engine.experiments.robustness_evidence import recompute_robustness_rows
+            recomputed_cells = recompute_robustness_rows(
+                Path(raw_by_logical[robustness_logical]["physical_path"]),
+                contract=plan["robustness_contract"],
+                class_order=plan["target_contract"]["class_order"])
+            submitted_cells = {item["cell_id"]: item
+                               for item in payload["robustness"]["cells"]}
+            for cell in recomputed_cells:
+                submitted = submitted_cells.get(cell["cell_id"])
+                if submitted is None:
+                    raise EvidenceValidationError("submitted robustness cell is missing")
+                for key, expected in cell.items():
+                    observed = submitted.get(key)
+                    if isinstance(expected, float):
+                        if not isinstance(observed, (int, float)) or abs(float(observed) - expected) > 1e-10:
+                            raise EvidenceValidationError(
+                                f"robustness cell {cell['cell_id']} {key} differs from recomputation")
+                    elif observed != expected:
+                        raise EvidenceValidationError(
+                            f"robustness cell {cell['cell_id']} {key} differs from recomputation")
+            payload["robustness"] = dict(payload["robustness"], cells=recomputed_cells)
+            payload["artifacts"] = dict(payload["artifacts"])
+            payload["artifacts"]["artifact_sha256"] = {
+                item["logical_path"]: item["sha256"] for item in verified}
+            payload["independent_verification"] = {
+                "dataset_bytes_verified": binding.get("dataset_bytes_verified") is True,
+                "evaluation_rows_verified": True,
+                "metrics_recomputed": True,
+                "artifact_bytes_verified": True,
+                "concentrations_recomputed": True,
+                "uncertainty_recomputed": True,
+                "test_receipts_verified": True,
+                "robustness_metrics_recomputed": True,
+                "robustness_rows_logical_path": robustness_logical,
+                "test_receipt_sha256": [item["receipt_sha256"]
+                                         for item in receipt_results],
+                "evaluation_rows_logical_path": row_logical,
+            }
+            payload.pop("evidence_sha256", None)
         validated = evidence_module.validate_evidence(
-            evidence_payload, plan=plan, seal=seal, binding=binding)
+            payload, plan=plan, seal=seal, binding=binding)
         files = _transition_files(
             experiment_dir, operation="record-evidence",
             new_artifacts={EVIDENCE_FILE: strict_json_text(validated).encode("utf-8")},
@@ -640,6 +830,17 @@ def _collect_hard_facts(
             len(hypothesis_ids) == len(set(hypothesis_ids))
     _fact(facts, "hard_no_duplicate_evidence_ids", unique_ids_ok,
           "no duplicate evidence identifiers")
+    independent = stored_evidence.get("independent_verification")
+    if isinstance(independent, dict):
+        for gate_id, key in (
+            ("hard_dataset_bytes_verified", "dataset_bytes_verified"),
+            ("hard_evaluation_rows_verified", "evaluation_rows_verified"),
+            ("hard_metrics_recomputed", "metrics_recomputed"),
+            ("hard_uncertainty_recomputed", "uncertainty_recomputed"),
+            ("hard_test_receipts_verified", "test_receipts_verified"),
+        ):
+            _fact(facts, gate_id, lambda key=key: independent.get(key) is True,
+                  f"Tribunal independently established {key}")
     return facts
 
 
@@ -656,6 +857,8 @@ def evaluate(
     with _ExperimentLock(experiment_dir):
         state_machine.require_state(current_state(experiment_dir),
                                     state_machine.EVIDENCE_RECORDED, operation="evaluate")
+        if registry_root is None:
+            raise TribunalError("registry_root is mandatory for verdict issuance")
         version_dir = _current_dir(experiment_dir)
         plan_bytes = (version_dir / PLAN_FILE).read_bytes()
         plan = load_artifact(experiment_dir, PLAN_FILE)
@@ -663,6 +866,8 @@ def evaluate(
         binding = load_artifact(experiment_dir, BINDING_FILE)
         stored_evidence = load_artifact(experiment_dir, EVIDENCE_FILE)
         events = load_events(experiment_dir)
+        from engine.experiments.registry_reconciliation import reconcile_binding
+        reconcile_binding(binding, registry_root)
 
         facts = _collect_hard_facts(
             plan_bytes=plan_bytes, plan=plan, seal=seal, binding=binding,
@@ -699,8 +904,16 @@ def evaluate(
         statistical_results = gates.evaluate_statistical_gates(
             plan["acceptance_gates"], namespace)
 
+        verdict_binding = dict(binding)
+        independent_verification = dict(
+            stored_evidence.get("independent_verification", {}))
+        independent_verification["registry_reconciled"] = True
+        independent_verification["robustness_plan_complete"] = (
+            independent_verification.get("robustness_metrics_recomputed") is True
+            and not robustness_report["missing_cells"])
+        verdict_binding["independent_verification"] = independent_verification
         verdict_payload = verdict_module.decide_verdict(
-            plan=plan, binding=binding, hard_gate_results=hard_results,
+            plan=plan, binding=verdict_binding, hard_gate_results=hard_results,
             statistical_gate_results=statistical_results,
             robustness_report=robustness_report,
             concentration_report=concentration_report,
@@ -725,11 +938,25 @@ def evaluate(
         }
         # The verification artifact commits to the audit head *including* the
         # events this transition appends; assemble events first to know it.
+        registry_receipt = holdout_registry.consume_holdout_idempotent(
+            registry_root, binding["holdout_id"])
+        registry_reconciliation = {
+            "reconciliation_version": "edge-tribunal-registry-reconciliation-v1",
+            "status": "COMPLETE", "experiment_id": binding["experiment_id"],
+            "binding_sha256": binding["binding_sha256"],
+            **registry_receipt,
+        }
+        registry_reconciliation["reconciliation_sha256"] = sha256_payload(
+            registry_reconciliation)
         preview_files = _transition_files(
             experiment_dir, operation="evaluate",
             new_artifacts={VERDICT_FILE: strict_json_text(verdict_payload).encode("utf-8"),
-                           SCORECARD_FILE: strict_json_text(scorecard).encode("utf-8")},
-            informational_events=[("GATES_EVALUATED", gates_event_payload)],
+                           SCORECARD_FILE: strict_json_text(scorecard).encode("utf-8"),
+                           REGISTRY_RECONCILIATION_FILE:
+                               strict_json_text(registry_reconciliation).encode("utf-8")},
+            informational_events=[("GATES_EVALUATED", gates_event_payload),
+                                  ("HOLDOUT_CONSUMED", registry_receipt),
+                                  ("REGISTRY_RECONCILED", registry_reconciliation)],
             transition_event_type="VERDICT_ISSUED",
             transition_payload={"verdict": verdict_payload["verdict"],
                                 "verdict_sha256": verdict_payload["verdict_sha256"]},
@@ -749,8 +976,6 @@ def evaluate(
         preview_files[REPORT_FILE] = report_markdown.encode("utf-8")
         _publish_version(experiment_dir, preview_files)
 
-        if registry_root is not None and binding.get("holdout_id"):
-            holdout_registry.consume_holdout(registry_root, binding["holdout_id"])
         return verdict_payload
 
 
@@ -770,7 +995,7 @@ def archive(
         _publish_version(experiment_dir, files)
 
 
-def verify_experiment(experiment_dir: Path) -> dict[str, Any]:
+def verify_experiment(experiment_dir: Path, *, registry_root: Path | None = None) -> dict[str, Any]:
     """Read-only end-to-end verification of every artifact and the audit chain."""
     experiment_dir = Path(experiment_dir)
     problems: list[str] = []
@@ -786,6 +1011,41 @@ def verify_experiment(experiment_dir: Path) -> dict[str, Any]:
         return {"ok": False, "state": None, "problems": [str(exc)],
                 "artifact_sha256": {}}
     artifact_hashes = {name: sha256_bytes(content) for name, content in snapshot.items()}
+    versions_root = experiment_dir / VERSIONS_DIR
+    version_dirs = sorted(entry for entry in versions_root.iterdir()
+                          if entry.is_dir() and entry.name.startswith("v"))
+    expected_names = [f"v{index:06d}" for index in range(1, len(version_dirs) + 1)]
+    if [entry.name for entry in version_dirs] != expected_names:
+        problems.append("snapshot history has missing, duplicate, or non-contiguous versions")
+    prior_name: str | None = None
+    prior_hash: str | None = None
+    for version in version_dirs:
+        try:
+            version_files = _read_snapshot(version)
+            meta_raw = version_files.get(SNAPSHOT_META_FILE)
+            if meta_raw is None:
+                problems.append(f"{version.name}: missing snapshot history commitment")
+                break
+            meta = load_strict_json_text(meta_raw.decode("utf-8"))
+            claimed_meta = meta.get("snapshot_meta_sha256")
+            meta_body = {key: value for key, value in meta.items()
+                         if key != "snapshot_meta_sha256"}
+            if claimed_meta != sha256_payload(meta_body):
+                problems.append(f"{version.name}: snapshot metadata hash mismatch")
+            if (meta.get("version") != version.name
+                    or meta.get("previous_version") != prior_name
+                    or meta.get("previous_snapshot_sha256") != prior_hash):
+                problems.append(f"{version.name}: previous-version commitment mismatch")
+            payload = {name: content for name, content in version_files.items()
+                       if name != SNAPSHOT_META_FILE}
+            if meta.get("snapshot_payload_sha256") != _snapshot_sha256(payload):
+                problems.append(f"{version.name}: snapshot payload commitment mismatch")
+            prior_name = version.name
+            prior_hash = _snapshot_sha256(version_files)
+        except (TribunalError, CanonicalJsonError) as exc:
+            problems.append(f"{version.name}: {exc}")
+    if version_dirs and current_version_name(experiment_dir) != version_dirs[-1].name:
+        problems.append("CURRENT does not point to the highest committed snapshot")
 
     events: list[dict[str, Any]] = []
     try:
@@ -795,9 +1055,26 @@ def verify_experiment(experiment_dir: Path) -> dict[str, Any]:
         problems.append(f"audit chain: {exc}")
     try:
         state = current_state(experiment_dir)
+        if state in (state_machine.DATA_BOUND, state_machine.EVIDENCE_RECORDED,
+                     state_machine.VERDICT_ISSUED, state_machine.ARCHIVED) \
+                and registry_root is None:
+            problems.append("registry_root is mandatory for DATA_BOUND and later verification")
         if events and state != events[-1]["state_after"]:
             problems.append(f"state file says {state}, audit chain says "
                             f"{events[-1]['state_after']}")
+        if state in (state_machine.VERDICT_ISSUED, state_machine.ARCHIVED):
+            reconciliation = load_artifact(experiment_dir, REGISTRY_RECONCILIATION_FILE)
+            claimed = reconciliation.get("reconciliation_sha256")
+            body = {key: value for key, value in reconciliation.items()
+                    if key != "reconciliation_sha256"}
+            if claimed != sha256_payload(body) or reconciliation.get("status") != "COMPLETE":
+                problems.append("registry reconciliation artifact is invalid or incomplete")
+            if registry_root is not None:
+                binding = load_artifact(experiment_dir, BINDING_FILE)
+                from engine.experiments.registry_reconciliation import reconcile_binding
+                receipt = reconcile_binding(binding, registry_root)
+                if receipt["status"] != holdout_registry.CONSUMED:
+                    problems.append("registry holdout is not CONSUMED")
     except TribunalError as exc:
         problems.append(f"state: {exc}")
 
@@ -851,6 +1128,17 @@ def verify_experiment(experiment_dir: Path) -> dict[str, Any]:
                 problems.append(str(exc))
     return {"ok": not problems, "state": state, "problems": problems,
             "artifact_sha256": artifact_hashes}
+
+
+def reconcile_registry(experiment_dir: Path, registry_root: Path) -> dict[str, Any]:
+    """Reconcile the idempotent registry side of an interrupted transition."""
+    binding = load_artifact(experiment_dir, BINDING_FILE)
+    from engine.experiments.registry_reconciliation import (
+        reconcile_binding, reconcile_verdict)
+    if current_state(experiment_dir) in (state_machine.VERDICT_ISSUED,
+                                         state_machine.ARCHIVED):
+        return reconcile_verdict(binding, registry_root)
+    return reconcile_binding(binding, registry_root)
 
 
 def show_state(experiment_dir: Path) -> dict[str, Any]:
@@ -908,10 +1196,14 @@ def _build_parser() -> argparse.ArgumentParser:
     record_cmd = add("record-evidence", "ingest the structured evidence bundle")
     record_cmd.add_argument("--evidence", required=True)
     evaluate_cmd = add("evaluate", "evaluate all gates and issue the verdict")
-    evaluate_cmd.add_argument("--registry-root", default=None)
+    evaluate_cmd.add_argument("--registry-root", required=True)
     add("archive", "archive a verdict-issued experiment")
     verify_cmd = subparsers.add_parser("verify", help="read-only artifact verification")
     verify_cmd.add_argument("--experiment-dir", required=True)
+    verify_cmd.add_argument("--registry-root", required=True)
+    reconcile_cmd = subparsers.add_parser("reconcile", help="reconcile holdout registry state")
+    reconcile_cmd.add_argument("--experiment-dir", required=True)
+    reconcile_cmd.add_argument("--registry-root", required=True)
     report_cmd = subparsers.add_parser("report", help="print the issued report")
     report_cmd.add_argument("--experiment-dir", required=True)
     show_cmd = subparsers.add_parser("show-state", help="read-only state summary")
@@ -948,8 +1240,8 @@ def main(argv: list[str] | None = None) -> int:
                                         timestamp_utc=args.timestamp)
             print(f"recorded evidence {validated['evidence_sha256']}")
         elif args.command == "evaluate":
-            registry = Path(args.registry_root) if args.registry_root else None
-            verdict_payload = evaluate(Path(args.experiment_dir), registry_root=registry,
+            verdict_payload = evaluate(Path(args.experiment_dir),
+                                       registry_root=Path(args.registry_root),
                                        actor=args.actor, timestamp_utc=args.timestamp)
             print(f"VERDICT: {verdict_payload['verdict']}")
             print(f"maximum next stage: {verdict_payload['maximum_next_stage']}")
@@ -958,9 +1250,14 @@ def main(argv: list[str] | None = None) -> int:
                     timestamp_utc=args.timestamp)
             print("experiment archived")
         elif args.command == "verify":
-            result = verify_experiment(Path(args.experiment_dir))
+            result = verify_experiment(
+                Path(args.experiment_dir),
+                registry_root=Path(args.registry_root) if args.registry_root else None)
             print(strict_json_text(result), end="")
             return 0 if result["ok"] else 1
+        elif args.command == "reconcile":
+            result = reconcile_registry(Path(args.experiment_dir), Path(args.registry_root))
+            print(strict_json_text(result), end="")
         elif args.command == "report":
             experiment_dir = Path(args.experiment_dir)
             state = current_state(experiment_dir)

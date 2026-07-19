@@ -216,6 +216,18 @@ def _validate_code_contract(errors: list[str], contract: Any) -> None:
                 errors.append(f"{where}.source_file_sha256[{path!r}] must be a SHA-256 hex digest")
     _require_str(errors, contract, "evidence_producer_command", where)
     _require_str_list(errors, contract, "allowed_implementation_files", where)
+    allowed = contract.get("allowed_implementation_files")
+    if isinstance(sources, dict) and isinstance(allowed, list):
+        outside = sorted(set(sources) - set(allowed))
+        if outside:
+            errors.append(f"{where}.source_file_sha256 contains files outside "
+                          f"allowed_implementation_files: {outside}")
+    commands = contract.get("required_test_commands")
+    if (not isinstance(commands, list) or not commands
+            or not all(isinstance(command, list) and command
+                       and all(isinstance(arg, str) and arg for arg in command)
+                       for command in commands)):
+        errors.append(f"{where}.required_test_commands must be non-empty canonical argv lists")
 
 
 def _validate_data_contract(errors: list[str], contract: Any) -> None:
@@ -343,7 +355,7 @@ def _validate_robustness(errors: list[str], contract: Any) -> None:
         errors.append(f"{where} must be an object")
         return
     for key in ("required_time_slices", "required_regime_slices", "required_policy_slices",
-                "required_perturbations"):
+                "required_split_boundary_policies", "required_perturbations"):
         _require_str_list(errors, contract, key, where)
     blocks = contract.get("required_block_lengths")
     if not isinstance(blocks, list) or not blocks or \

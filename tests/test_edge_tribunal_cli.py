@@ -55,7 +55,8 @@ def test_cli_invalid_sequence_and_report_before_verdict_fail(tmp_path: Path) -> 
 def test_cli_verify_and_show_state_are_byte_for_byte_read_only(tmp_path: Path) -> None:
     context = run_pipeline_to_bound(tmp_path)
     before = snapshot(context["experiment_dir"])
-    verify = run_cli("verify", "--experiment-dir", str(context["experiment_dir"]))
+    verify = run_cli("verify", "--experiment-dir", str(context["experiment_dir"]),
+                     "--registry-root", str(context["registry_root"]))
     show = run_cli("show-state", "--experiment-dir", str(context["experiment_dir"]))
     after = snapshot(context["experiment_dir"])
     assert verify.returncode == 0 and json.loads(verify.stdout)["ok"] is True
@@ -100,5 +101,5 @@ def test_four_synthetic_examples_complete_with_exact_verdicts(tmp_path: Path) ->
     payload = json.loads(result.stdout)
     assert payload["synthetic_only"] is True
     assert [item["verdict"] for item in payload["results"]] == [
-        "INVALID_EXPERIMENT", "REJECTED", "INCONCLUSIVE", "FORWARD_TEST_ELIGIBLE"]
+        "INVALID_EXPERIMENT", "REJECTED", "INCONCLUSIVE", "RESEARCH_ONLY"]
     assert all(item["trading_authorization"] is False for item in payload["results"])

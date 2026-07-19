@@ -4,13 +4,15 @@
   "type": "object",
   "required": [
     "binding_version", "binding_id", "experiment_id", "plan_sha256", "seal_sha256",
-    "dataset_manifest_sha256", "dataset_name", "provenance", "files",
+    "dataset_manifest_sha256", "dataset_content_fingerprint", "dataset_layout_sha256",
+    "dataset_bytes_verified", "dataset_name", "provenance", "files",
     "row_count_total", "minimum_timestamp_utc", "maximum_timestamp_utc",
     "pair_scope", "frequency", "timestamp_timezone", "required_columns",
     "missing_row_count", "duplicate_row_count", "segment_count", "gap_count",
     "price_side", "execution_data", "execution_data_complete", "holdout_interval",
     "prior_inspection_cutoff_utc", "untouched_claim", "untouched_evidence",
-    "holdout_id", "holdout_claim_status", "holdout_reuse_kind",
+    "holdout_id", "holdout_claim_token", "holdout_registry_revision",
+    "holdout_claim_status", "holdout_reuse_kind",
     "promotion_blocked_by_holdout", "maximum_verdict_after_binding",
     "maximum_evidence_level", "bound_at_utc", "binding_sha256"
   ],
@@ -21,6 +23,9 @@
     "plan_sha256": {"type": "string"},
     "seal_sha256": {"type": "string"},
     "dataset_manifest_sha256": {"type": "string"},
+    "dataset_content_fingerprint": {"type": "string"},
+    "dataset_layout_sha256": {"type": "string"},
+    "dataset_bytes_verified": {"type": "boolean"},
     "dataset_name": {"type": "string"},
     "provenance": {"type": "string"},
     "files": {
@@ -31,7 +36,8 @@
         "properties": {
           "logical_path": {"type": "string"},
           "sha256": {"type": "string"},
-          "row_count": {"type": "integer"}
+          "row_count": {"type": "integer"},
+          "size_bytes": {"type": "integer"}
         },
         "additionalProperties": false
       }
@@ -63,6 +69,8 @@
     "untouched_claim": {"type": "boolean"},
     "untouched_evidence": {"type": "string"},
     "holdout_id": {"type": "string"},
+    "holdout_claim_token": {"type": "string"},
+    "holdout_registry_revision": {"type": "integer"},
     "holdout_claim_status": {"type": "string",
                              "enum": ["UNUSED", "SEALED_FOR_EXPERIMENT", "CONSUMED",
                                       "FORENSIC_REUSE", "INVALIDATED"]},
