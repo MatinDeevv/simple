@@ -29,7 +29,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="auractl")
     parser.add_argument("command", choices=sorted(COMMANDS))
     args, remainder = parser.parse_known_args(argv)
-    module = importlib.import_module(COMMANDS[args.command])
+    module_name = COMMANDS[args.command]
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        parser.error(f"command {args.command!r} could not import {module_name!r}: {exc}")
     return int(module.main(remainder))
 
 

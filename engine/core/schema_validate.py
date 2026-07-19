@@ -21,6 +21,8 @@ Schema documents in ``config/schemas/*.schema.json`` use this convention:
 
 from __future__ import annotations
 
+import math
+from numbers import Integral, Real
 from typing import Any
 
 _PY_TYPE_NAMES = {
@@ -37,9 +39,9 @@ _PY_TYPE_NAMES = {
 def _json_type_name(value: Any) -> str:
     if isinstance(value, bool):
         return "boolean"
-    if isinstance(value, int):
+    if isinstance(value, Integral):
         return "integer"
-    if isinstance(value, float):
+    if isinstance(value, Real):
         return "number"
     for python_type, name in _PY_TYPE_NAMES.items():
         if python_type is bool or python_type is int:
@@ -51,6 +53,8 @@ def _json_type_name(value: Any) -> str:
 
 def _type_matches(value: Any, declared: str) -> bool:
     actual = _json_type_name(value)
+    if actual in {"integer", "number"} and not math.isfinite(float(value)):
+        return False
     if declared == "number":
         return actual in ("number", "integer")
     return actual == declared

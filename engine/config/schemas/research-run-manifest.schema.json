@@ -27,6 +27,7 @@
     "frozen_contract_version": {"type": "string"},
     "holdout_status": {"type": "string", "enum": ["not_used", "clean_holdout", "burned_acknowledged"]},
     "required_tests_passed": {"type": "boolean"},
+    "test_evidence": {"type": "array", "items": {"type": "object"}},
     "promotion_eligible": {"type": "boolean"},
     "promotion_blockers": {"type": "array", "items": {"type": "string"}},
     "manifest_sha256": {"type": "string"}

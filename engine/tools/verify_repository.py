@@ -26,6 +26,7 @@ import sys
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -118,28 +119,42 @@ def check_tracked_configuration_files_exist() -> CheckResult:
     return CheckResult("tracked configuration files exist", True)
 
 
-def _export_clean_checkout(dest: Path) -> None:
-    """Extract the staged Git tree into ``dest``; never trust working-tree files."""
-    tree = _git(["write-tree"]).strip()
-    archive = subprocess.run(["git", "archive", "--format=tar", tree], cwd=ROOT,
+def _tree_ref(tree: str) -> str:
+    if tree == "head":
+        return "HEAD"
+    if tree == "index":
+        return _git(["write-tree"]).strip()
+    raise ValueError("tree must be 'head' or 'index'")
+
+
+def _export_clean_checkout(dest: Path, *, tree: str = "head") -> None:
+    """Extract only committed HEAD or the staged index; never trust worktree files."""
+    tree_ref = _tree_ref(tree)
+    archive = subprocess.run(["git", "archive", "--format=tar", tree_ref], cwd=ROOT,
                              capture_output=True, check=True).stdout
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as payload:
-        members = [member for member in payload.getmembers()
-                   if not (member.name == "data" or member.name.startswith("data/")
-                           or member.name == "artifacts" or member.name.startswith("artifacts/"))]
+        members = []
+        for member in payload.getmembers():
+            path = PurePosixPath(member.name)
+            if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
+                raise RuntimeError(f"unsafe path in Git archive: {member.name!r}")
+            if member.name == "data" or member.name.startswith("data/") or member.name == "artifacts" or member.name.startswith("artifacts/"):
+                continue
+            members.append(member)
         payload.extractall(dest, members=members, filter="data")
 
 
-def check_clean_checkout_imports(tmp_root: Path) -> CheckResult:
+def check_clean_checkout_imports(tmp_root: Path, *, tree: str = "head") -> CheckResult:
     """Every source module must import with no generated data or artifacts."""
     clean_dir = tmp_root / "clean_checkout"
     clean_dir.mkdir(parents=True, exist_ok=True)
-    _export_clean_checkout(clean_dir)
+    _export_clean_checkout(clean_dir, tree=tree)
     if (clean_dir / "data").exists() or (clean_dir / "artifacts").exists():
         return CheckResult("clean-checkout imports", False,
                            "generated data or artifacts were copied into the clean checkout")
     failures: list[str] = []
-    for module in CLEAN_IMPORT_MODULES:
+    modules = _discover_clean_import_modules(clean_dir)
+    for module in modules:
         proc = subprocess.run([sys.executable, "-c", f"import {module}"], cwd=clean_dir,
                               capture_output=True, text=True, timeout=60)
         optional_dependency = OPTIONAL_ENV_MODULES.get(module)
@@ -161,7 +176,7 @@ def check_clean_checkout_imports(tmp_root: Path) -> CheckResult:
             failures.append(f"{module}: import failed:\n{proc.stderr}")
     if failures:
         return CheckResult("clean-checkout imports", False, "; ".join(failures))
-    return CheckResult("clean-checkout imports", True, f"{len(CLEAN_IMPORT_MODULES)} modules")
+    return CheckResult("clean-checkout imports", True, f"{tree}: {len(modules)} modules")
 
 
 def check_core_dependency_versions() -> CheckResult:
@@ -367,6 +382,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-slow", action="store_true",
                         help="skip pytest/self-check/clean-import runs; only run cheap static checks")
+    parser.add_argument("--tree", choices=("head", "index"), default="head",
+                        help="Git tree used for clean-checkout imports (default: committed HEAD)")
     args = parser.parse_args()
 
     results: list[CheckResult] = []
@@ -375,7 +392,7 @@ def main() -> int:
 
     if not args.skip_slow:
         with tempfile.TemporaryDirectory(prefix="verify_repository_") as tmp:
-            results.append(check_clean_checkout_imports(Path(tmp)))
+            results.append(check_clean_checkout_imports(Path(tmp), tree=args.tree))
         results.append(check_tests_pass())
         results.append(check_required_self_checks())
         results.append(check_quantum_archive_self_checks())

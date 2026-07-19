@@ -49,11 +49,18 @@ def _clean_repo_with_source(tmp_path: Path) -> tuple[Path, Path]:
     return repo, repo / "source.py"
 
 
+def _evidence(repo: Path) -> list[dict[str, object]]:
+    commit, status = rm.git_info(repo)
+    assert status == "clean" and commit
+    return [{"command": "python -m pytest tests -q", "exit_code": 0,
+             "log_sha256": "a" * 64, "git_commit": commit}]
+
+
 def test_promotion_eligible_when_every_gate_is_satisfied(tmp_path: Path) -> None:
     repo, source = _clean_repo_with_source(tmp_path)
     manifest = rm.build_run_manifest(
         root=repo, frozen_contract_version="v1", required_tests_passed=True,
-        holdout_status="clean_holdout", source_files=[source],
+        holdout_status="clean_holdout", source_files=[source], test_evidence=_evidence(repo),
     )
     assert manifest["promotion_eligible"] is True
     assert manifest["promotion_blockers"] == []
@@ -100,6 +107,14 @@ def test_promotion_blocked_when_tests_not_recorded_passed(tmp_path: Path) -> Non
     )
     assert manifest["promotion_eligible"] is False
     assert any("tests were not recorded" in blocker for blocker in manifest["promotion_blockers"])
+
+
+def test_promotion_requires_commit_bound_test_evidence(tmp_path: Path) -> None:
+    repo, source = _clean_repo_with_source(tmp_path)
+    manifest = rm.build_run_manifest(root=repo, frozen_contract_version="v1", required_tests_passed=True,
+                                     holdout_status="clean_holdout", source_files=[source])
+    assert manifest["promotion_eligible"] is False
+    assert any("evidence" in blocker for blocker in manifest["promotion_blockers"])
 
 
 def test_git_unavailable_blocks_promotion_even_with_every_other_gate_satisfied(tmp_path: Path) -> None:
@@ -164,11 +179,22 @@ def test_write_manifest_refuses_a_tampered_payload(tmp_path: Path) -> None:
 def test_write_and_read_manifest_roundtrip(tmp_path: Path) -> None:
     repo, source = _clean_repo_with_source(tmp_path)
     manifest = rm.build_run_manifest(root=repo, frozen_contract_version="v1", required_tests_passed=True,
-                                     holdout_status="clean_holdout", source_files=[source])
+                                     holdout_status="clean_holdout", source_files=[source], test_evidence=_evidence(repo))
     out_path = rm.write_manifest(manifest, tmp_path / "out" / "manifest.json")
     reloaded = rm.read_manifest(out_path)
     assert reloaded == manifest
     assert rm.verify_manifest_integrity(reloaded) is True
+
+
+def test_read_manifest_rejects_tampering_by_default(tmp_path: Path) -> None:
+    repo, source = _clean_repo_with_source(tmp_path)
+    manifest = rm.build_run_manifest(root=repo, frozen_contract_version="v1", required_tests_passed=True,
+                                     holdout_status="clean_holdout", source_files=[source], test_evidence=_evidence(repo))
+    path = rm.write_manifest(manifest, tmp_path / "manifest.json")
+    payload = path.read_text(encoding="utf-8").replace('"clean"', '"dirty"', 1)
+    path.write_text(payload, encoding="utf-8")
+    with pytest.raises(rm.RunManifestError):
+        rm.read_manifest(path)
 
 
 def test_configuration_sha256_is_deterministic_and_order_independent(tmp_path: Path) -> None:

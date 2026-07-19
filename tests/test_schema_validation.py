@@ -86,6 +86,19 @@ def test_validate_instance_enforces_enum() -> None:
     assert any("predicted_direction" in error for error in errors)
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), np.float64("nan")])
+def test_non_finite_numbers_are_rejected(value: float) -> None:
+    schema = {"type": "object", "properties": {"x": {"type": "number"}}, "required": ["x"]}
+    assert any("$.x" in error for error in sv.validate_instance(schema, {"x": value}))
+
+
+def test_integer_rejects_bool_and_nullable_union_is_supported() -> None:
+    integer = {"type": "integer"}
+    assert sv.validate_instance(integer, True)
+    nullable = {"type": ["string", "null"]}
+    assert sv.validate_instance(nullable, None) == []
+
+
 def test_real_run_manifest_validates_against_its_schema(tmp_path: Path) -> None:
     import subprocess
     subprocess.run(["git", "-c", "user.email=t@e.com", "-c", "user.name=t", "init", "-q"],

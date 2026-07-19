@@ -12,8 +12,9 @@ the quantum-archive research content themselves; see `docs/stat-arb.md`,
 ## Running it locally
 
 ```powershell
-python engine/tools/verify_repository.py
-python engine/tools/verify_repository.py --skip-slow   # cheap static checks only
+python -m engine.tools.verify_repository --tree head
+python -m engine.tools.verify_repository --tree index  # staged pre-commit candidate
+python -m engine.tools.verify_repository --skip-slow   # cheap static checks only
 ```
 
 Exit code is nonzero if any check fails. Each line is `[PASS]`, `[FAIL]`, or
@@ -21,6 +22,13 @@ Exit code is nonzero if any check fails. Each line is `[PASS]`, `[FAIL]`, or
 import test, `pytest tests`, and every module's `--self-check` (all of which
 spawn subprocesses and take real time); use it for a fast sanity pass while
 iterating.
+
+`--tree head` is the formal audit: it discovers and imports only files from
+committed `HEAD`. `--tree index` uses only the staged index for pre-commit
+verification. Neither mode permits untracked or unstaged source to help the
+result. Generated data and artifacts are excluded from the extracted tree.
+The workflow also builds a non-editable wheel, installs it in a separate
+environment outside the checkout, and records CLI/resource receipts.
 
 ## What each check actually verifies
 

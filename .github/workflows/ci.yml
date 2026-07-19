@@ -214,3 +214,45 @@ jobs:
           path: artifacts/
           retention-days: 14
           if-no-files-found: ignore
+
+  installed-package-smoke:
+    name: installed-package-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements-core.txt
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-core.txt
+      - name: build wheel from committed source
+        run: |
+          mkdir -p artifacts/wheel
+          python -m pip wheel . --no-deps --wheel-dir artifacts/wheel
+          sha256sum artifacts/wheel/*.whl | tee artifacts/wheel/SHA256SUMS.txt
+          unzip -l artifacts/wheel/*.whl | tee artifacts/wheel/contents.txt
+      - name: install and smoke-test wheel outside checkout
+        run: |
+          python -m venv /tmp/engine-wheel-venv
+          /tmp/engine-wheel-venv/bin/python -m pip install artifacts/wheel/*.whl
+          mkdir -p /tmp/engine-wheel-smoke
+          cd /tmp/engine-wheel-smoke
+          /tmp/engine-wheel-venv/bin/auractl --help | tee "$GITHUB_WORKSPACE/artifacts/wheel/auractl-help.txt"
+          /tmp/engine-wheel-venv/bin/auractl stat-arb --self-check | tee "$GITHUB_WORKSPACE/artifacts/wheel/stat-arb.txt"
+          /tmp/engine-wheel-venv/bin/auractl integrator --self-check | tee "$GITHUB_WORKSPACE/artifacts/wheel/integrator.txt"
+          /tmp/engine-wheel-venv/bin/auractl legal-event --self-check | tee "$GITHUB_WORKSPACE/artifacts/wheel/legal-event.txt"
+          /tmp/engine-wheel-venv/bin/python -c 'import engine; from pathlib import Path; from engine.core.contracts import canonical_pair_order; print(canonical_pair_order(Path(engine.__file__).resolve().parents[1]))' | tee "$GITHUB_WORKSPACE/artifacts/wheel/resources.txt"
+          /tmp/engine-wheel-venv/bin/python -m pip list | tee "$GITHUB_WORKSPACE/artifacts/wheel/installed-packages.txt"
+      - name: upload installed-package receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-package-smoke-receipts
+          path: artifacts/wheel/
+          retention-days: 14
+          if-no-files-found: error

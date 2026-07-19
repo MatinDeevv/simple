@@ -24,6 +24,7 @@ Use Python 3.11 for core research and tests:
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-core.txt
+.venv\Scripts\python.exe -m pip install -e .
 ```
 
 Qiskit Aer noise calibration has its own environment:
@@ -46,6 +47,20 @@ python -m engine.models.events.legal_event --self-check
 ```
 
 CI runs the test suite and numerical self-checks on every push and pull request.
+
+For a reproducible installed-package check, build a wheel and install it in a
+fresh environment; editable installation above is for source development only:
+
+```powershell
+python -m pip wheel . --no-deps -w dist
+python -m pip install dist\engine-*.whl
+auractl --help
+auractl stat-arb --self-check
+```
+
+`pyproject.toml` declares compatible core runtime ranges. `requirements-core.txt`
+is the exact Python 3.11 reproducibility set used by CI. Qiskit/Aer remains an
+optional isolated environment and is not required to import or run core checks.
 
 ## Canonical contracts
 
