@@ -1,0 +1,18 @@
+{
+  "name": "simple-agent-framework",
+  "version": "0.1.0+codex.20260719072702",
+  "description": "Safe orchestration for MatinDeevv/simple",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Simple Agent Framework",
+    "shortDescription": "Safe multi-agent orchestration.",
+    "longDescription": "Project-local roles, receipts, and guarded agent loops.",
+    "developerName": "Local developer",
+    "category": "Engineering",
+    "capabilities": [],
+    "defaultPrompt": "Use simple-repo-orchestrator for this repository."
+  }
+}

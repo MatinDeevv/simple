@@ -52,3 +52,4 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+.agents/receipts/
