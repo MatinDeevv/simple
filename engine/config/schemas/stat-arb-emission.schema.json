@@ -1,0 +1,31 @@
+{
+  "schema_version": "fxsim-stat-arb-emission-v1",
+  "title": "stat_arb.py per-minute emission row (engine/stat_arb.py:run_arrays)",
+  "note": "stat_arb.py is under active development (OQ-14); this schema intentionally requires only the structurally stable identity/eligibility/probability columns, not every diagnostic or outcome column, per docs/repository-verification.md.",
+  "type": "object",
+  "required": [
+    "source_index", "timestamp", "segment_id", "selected_component_index",
+    "selected_component", "entry_eligible", "holding_horizon_steps",
+    "high_volatility_regime_probability", "breakdown_probability",
+    "p_basket_directional", "p_basket_neutral", "p_basket_positive", "p_basket_negative"
+  ],
+  "properties": {
+    "source_index": {"type": "integer"},
+    "timestamp": {"type": "string"},
+    "segment_id": {"type": "integer"},
+    "selected_component_index": {"type": "integer"},
+    "selected_component": {"type": "string"},
+    "entry_eligible": {"type": "boolean"},
+    "holding_horizon_steps": {"type": "integer"},
+    "high_volatility_regime_probability": {"type": "number"},
+    "breakdown_probability": {"type": "number"},
+    "p_basket_directional": {"type": "number"},
+    "p_basket_neutral": {"type": "number"},
+    "p_basket_positive": {"type": "number"},
+    "p_basket_negative": {"type": "number"},
+    "basket_outcome_class": {"type": ["number", "null"]},
+    "basket_binary_label": {"type": ["number", "null"]},
+    "target_time": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

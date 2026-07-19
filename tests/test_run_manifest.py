@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from fxresearch.core import run_manifest as rm
+from engine.core import run_manifest as rm
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:

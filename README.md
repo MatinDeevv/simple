@@ -1,4 +1,4 @@
-﻿# FX Dynamics Research Simulator
+# FX Dynamics Research Simulator
 
 This repository is a causality-first simulator for ten Dukascopy one-minute FX
 BID-bar series. It is not a trading system and makes no profitability,
@@ -37,19 +37,19 @@ python -m venv .venv-quantum
 
 ```powershell
 python -m pytest tests -q
-python pipeline\simulate_integrator.py --self-check
-python pipeline\quantum_lindblad.py --self-check
-python pipeline\quantum_reservoir.py --self-check
-python pipeline\stat_arb.py --self-check
-python pipeline\legal_event.py --self-check
-.venv-quantum\Scripts\python.exe pipeline\quantum_aer_noise.py --self-check
+python -m engine.models.classical.simulate_integrator --self-check
+python -m engine.quantum.quantum_lindblad --self-check
+python -m engine.quantum.quantum_reservoir --self-check
+python -m engine.models.statistical.stat_arb --self-check
+python -m engine.models.events.legal_event --self-check
+.venv-quantum\Scripts\python.exe -m engine.quantum.quantum_aer_noise --self-check
 ```
 
 CI runs the test suite and numerical self-checks on every push and pull request.
 
 ## Canonical contracts
 
-- `fxresearch/config/instruments.json` is the tracked, load-bearing instrument order.
+- `engine/config/instruments.json` is the tracked, load-bearing instrument order.
 - Ingestion writes that order into `data/canonical/manifest.json`; generated
   manifests must validate against the tracked configuration.
 - A state update requires an observed contiguous 60-second predecessor.

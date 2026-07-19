@@ -1,6 +1,6 @@
-﻿# Causal FX Residual-Level Research Arena
+# Causal FX Residual-Level Research Arena
 
-`fxresearch/models/statistical/stat_arb.py` is a classical, causality-first research arena. It is
+`engine/models/statistical/stat_arb.py` is a classical, causality-first research arena. It is
 not a strategy, backtest, OMS, execution model, market maker, or portfolio
 authorization system. The source is one-minute BID bars only; it has no ask,
 spread, fill, queue, borrow, impact, capacity, contract-notional, or conversion
@@ -13,7 +13,7 @@ synthetically tested only. Its normal data CLI is guarded because all current
 canonical observations end in the already inspected 2024 holdout.
 
 ```powershell
-python pipeline\stat_arb.py --self-check
+python engine\models\statistical\stat_arb.py --self-check
 ```
 
 `--allow-burned-holdout-research` exists only for an explicit, non-promotable

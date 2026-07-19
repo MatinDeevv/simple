@@ -7,12 +7,12 @@ import numpy as np
 import pytest
 
 
-from fxresearch.core.contracts import (ContractError, canonical_pair_order, contiguous_60s,
+from engine.core.contracts import (ContractError, canonical_pair_order, contiguous_60s,
                        first_post_gap_mask, validate_generated_manifest)
-from fxresearch.data.ingestion import ingest
-from fxresearch.models.classical import estimate_coupling
-from fxresearch.models.classical import simulate_integrator as integrator
-from research.quantum import (quantum_kernel, quantum_lindblad, quantum_mps,
+from engine.data.ingestion import ingest
+from engine.models.classical import estimate_coupling
+from engine.models.classical import simulate_integrator as integrator
+from engine.quantum import (quantum_kernel, quantum_lindblad, quantum_mps,
                               quantum_reservoir, quantum_trajectories)
 
 
@@ -24,7 +24,7 @@ EXPECTED_PAIRS = (
 
 
 def write_instrument_config(root: Path, order: tuple[str, ...] = EXPECTED_PAIRS) -> None:
-    config_dir = root / "fxresearch" / "config"
+    config_dir = root / "engine" / "config"
     config_dir.mkdir(parents=True)
     (config_dir / "instruments.json").write_text(
         json.dumps({"schema_version": "fxsim-instruments-v1", "instrument_index_order": list(order)}),
@@ -52,7 +52,7 @@ def test_tracked_order_bootstraps_without_generated_data(tmp_path: Path) -> None
 
 def test_tracked_order_rejects_an_unknown_config_schema(tmp_path: Path) -> None:
     write_instrument_config(tmp_path)
-    config_path = tmp_path / "fxresearch" / "config" / "instruments.json"
+    config_path = tmp_path / "engine" / "config" / "instruments.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
     config["schema_version"] = "not-a-supported-schema"
     config_path.write_text(json.dumps(config), encoding="utf-8")

@@ -1,9 +1,9 @@
-﻿# Classical Integrator: Numerical Safety, Not Harmonic-Model Acceptance
+# Classical Integrator: Numerical Safety, Not Harmonic-Model Acceptance
 
 | Item | Current contract |
 |---|---|
 | Owner | sim-integrator |
-| Implementation | `fxresearch/models/classical/simulate_integrator.py`, `integrator-1.2.0` |
+| Implementation | `engine/models/classical/simulate_integrator.py`, `integrator-1.2.0` |
 | Scope | EURUSD, USDJPY, USDCNH only; indices `[0,1,5]` |
 | Status | Gap handling closed; harmonic-curvature identification and non-normal stability acceptance reopened |
 | Non-claim | This is neither a ten-pair simulation nor a validated restoring-force model. |
@@ -82,7 +82,7 @@ candidate specification; it has not been implemented or accepted.
 Command:
 
 ```powershell
-python pipeline\simulate_integrator.py --max-steps 250000
+python engine\models\classical\simulate_integrator.py --max-steps 250000
 ```
 
 | Metric | Result |

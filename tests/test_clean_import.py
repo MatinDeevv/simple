@@ -1,6 +1,6 @@
 """Every tracked source module must import from a clean checkout.
 
-A clean checkout has only application and research source: no generated data,
+A clean checkout has only application source: no generated data,
 artifacts, or local caches. This test creates a code-only temporary copy and
 imports each module there in a subprocess, so a module that reaches for
 generated data or a stray absolute path at import time fails loudly instead
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from fxresearch.tools import verify_repository
+from engine.tools import verify_repository
 
 
 def test_all_tracked_source_modules_import_without_generated_data() -> None:
@@ -31,8 +31,8 @@ def test_clean_checkout_does_not_track_generated_data_directories() -> None:
         verify_repository._export_clean_checkout(clean_dir)
         assert not (clean_dir / "data").exists()
         assert not (clean_dir / "artifacts").exists()
-        assert (clean_dir / "fxresearch" / "config" / "instruments.json").exists()
-        assert (clean_dir / "fxresearch" / "core" / "contracts.py").exists()
+        assert (clean_dir / "engine" / "config" / "instruments.json").exists()
+        assert (clean_dir / "engine" / "core" / "contracts.py").exists()
 
 
 @pytest.mark.parametrize("module_name", [

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 
-from fxresearch.models.events import legal_event
+from engine.models.events import legal_event
 
 
 def test_event_pressure_respects_recorded_scenario_probabilities_and_pair_exposure() -> None:

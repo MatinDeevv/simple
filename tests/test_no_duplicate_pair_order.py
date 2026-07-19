@@ -1,14 +1,14 @@
 """Repository-wide guard: no production module may hardcode its own copy of
 the canonical ten-pair FX instrument order.
 
-``fxresearch/config/instruments.json`` (via ``fxresearch/core/contracts.canonical_pair_order``)
+``engine/config/instruments.json`` (via ``engine/core/contracts.canonical_pair_order``)
 is the single source of truth. This test uses an AST-based scan (see
-``fxresearch/tools/repo_pair_order_scan.py``) so it tolerates comments, docstrings,
+``engine/tools/repo_pair_order_scan.py``) so it tolerates comments, docstrings,
 individual pair-name references, and explicitly-marked test fixtures (this
 file and ``tests/test_contracts.py`` both define ``EXPECTED_PAIRS`` on
 purpose, to validate the tracked contract end to end), while still catching
 a real drifted duplicate such as the one found and fixed in
-``fxresearch/models/classical/estimate_dynamics.py`` (``PAIRS_ALL`` used to be a second literal
+``engine/models/classical/estimate_dynamics.py`` (``PAIRS_ALL`` used to be a second literal
 copy of the order).
 """
 
@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fxresearch.core.contracts import canonical_pair_order
-from fxresearch.tools.repo_pair_order_scan import find_duplicate_pair_order_definitions
+from engine.core.contracts import canonical_pair_order
+from engine.tools.repo_pair_order_scan import find_duplicate_pair_order_definitions
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PAIRS = (
@@ -36,8 +36,8 @@ def test_no_production_module_hardcodes_a_duplicate_pair_order() -> None:
 
 
 def test_scanner_detects_an_exact_duplicate(tmp_path: Path) -> None:
-    (tmp_path / "fxresearch").mkdir()
-    (tmp_path / "fxresearch" / "offender.py").write_text(
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "offender.py").write_text(
         "PAIRS = ('EURUSD', 'USDJPY', 'GBPUSD', 'AUDUSD', 'USDCAD', "
         "'USDCNH', 'USDCHF', 'EURGBP', 'EURJPY', 'GBPJPY')\n",
         encoding="utf-8",
@@ -49,9 +49,9 @@ def test_scanner_detects_an_exact_duplicate(tmp_path: Path) -> None:
 
 
 def test_scanner_detects_a_reordered_duplicate(tmp_path: Path) -> None:
-    (tmp_path / "fxresearch").mkdir()
+    (tmp_path / "engine").mkdir()
     reordered = tuple(reversed(EXPECTED_PAIRS))
-    (tmp_path / "fxresearch" / "offender.py").write_text(
+    (tmp_path / "engine" / "offender.py").write_text(
         f"PAIRS = {reordered!r}\n", encoding="utf-8",
     )
     findings = find_duplicate_pair_order_definitions(tmp_path, EXPECTED_PAIRS)
@@ -60,8 +60,8 @@ def test_scanner_detects_a_reordered_duplicate(tmp_path: Path) -> None:
 
 
 def test_scanner_tolerates_individual_pair_references_and_comments(tmp_path: Path) -> None:
-    (tmp_path / "fxresearch").mkdir()
-    (tmp_path / "fxresearch" / "fine.py").write_text(
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "fine.py").write_text(
         "# canonical order is EURUSD, USDJPY, GBPUSD, AUDUSD, USDCAD, "
         "USDCNH, USDCHF, EURGBP, EURJPY, GBPJPY\n"
         "PRIMARY = 'EURUSD'\n"

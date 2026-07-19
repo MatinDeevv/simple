@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 
-from fxresearch.models.statistical import stat_arb
+from engine.models.statistical import stat_arb
 
 
 FAST_CONFIG = stat_arb.ArenaConfig(

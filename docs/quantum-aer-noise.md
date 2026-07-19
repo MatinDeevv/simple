@@ -1,4 +1,4 @@
-﻿# Qiskit Aer Noise-Calibration Experiment
+# Qiskit Aer Noise-Calibration Experiment
 
 ## Scope
 
@@ -40,8 +40,8 @@ Create the isolated environment once:
 
 Then run:
 
-    .venv-quantum\Scripts\python.exe pipeline\quantum_aer_noise.py --self-check
-    .venv-quantum\Scripts\python.exe pipeline\quantum_aer_noise.py --max-rows 50000 --max-samples 24 --shots 4096
+    .venv-quantum\Scripts\python.exe engine\quantum\quantum_aer_noise.py --self-check
+    .venv-quantum\Scripts\python.exe engine\quantum\quantum_aer_noise.py --max-rows 50000 --max-samples 24 --shots 4096
 
 The resulting Parquet artifact records causal input, circuit size/depth,
 ideal/noisy Z and ZZ observables, parity, and absolute observable errors.

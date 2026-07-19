@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fxresearch.evaluation import entry_diagnostics as ed
-from fxresearch.evaluation import evaluation_protocol as ep
+from engine.evaluation import entry_diagnostics as ed
+from engine.evaluation import evaluation_protocol as ep
 
 
 def _frame(source_index, segment_id, component, eligible, horizon, weights_a=None, weights_b=None) -> pd.DataFrame:

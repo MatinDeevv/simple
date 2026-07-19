@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 
-from fxresearch.models.classical import simulate_integrator as integrator
+from engine.models.classical import simulate_integrator as integrator
 
 
 def synthetic_inputs() -> tuple[np.ndarray, np.ndarray, list[dict[str, np.ndarray]], dict[str, np.ndarray]]:

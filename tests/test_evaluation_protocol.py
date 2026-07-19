@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fxresearch.evaluation import evaluation_protocol as ep
+from engine.evaluation import evaluation_protocol as ep
 
 
 def test_target_interval_is_inclusive_and_rejects_negative_horizon() -> None:

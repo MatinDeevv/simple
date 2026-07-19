@@ -1,0 +1,46 @@
+{
+  "schema_version": "fxsim-stat-arb-summary-v1",
+  "title": "stat_arb.py run summary.json (engine/stat_arb.py:run_arrays)",
+  "note": "stat_arb.py is under active development (OQ-14); this schema intentionally requires only the structurally stable top-level sections, not every diagnostic sub-field, per docs/repository-verification.md.",
+  "type": "object",
+  "required": [
+    "version", "interpretation", "pair_scope", "target_contract",
+    "causality", "components", "window", "evaluation", "promotion_status"
+  ],
+  "properties": {
+    "version": {"type": "string"},
+    "interpretation": {"type": "string"},
+    "pair_scope": {"type": "array", "items": {"type": "string"}},
+    "target_contract": {"type": "object"},
+    "causality": {
+      "type": "object",
+      "required": ["gap_resets", "max_contiguous_state_steps"],
+      "properties": {
+        "gap_resets": {"type": "integer"},
+        "max_contiguous_state_steps": {"type": "integer"}
+      }
+    },
+    "components": {"type": "object"},
+    "window": {
+      "type": "object",
+      "required": ["start", "end", "raw_rows"],
+      "properties": {
+        "start": {"type": "string"},
+        "end": {"type": "string"},
+        "raw_rows": {"type": "integer"}
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "required": ["train_samples", "oos_samples"],
+      "properties": {
+        "train_samples": {"type": "integer"},
+        "oos_samples": {"type": "integer"}
+      }
+    },
+    "promotion_status": {"type": "string"},
+    "outputs": {"type": "object"},
+    "source_hashes": {"type": "object"}
+  },
+  "additionalProperties": true
+}

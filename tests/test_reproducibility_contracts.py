@@ -23,9 +23,9 @@ import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-from fxresearch.evaluation import evaluation_protocol as ep
-from fxresearch.models.events import legal_event
-from fxresearch.models.statistical import stat_arb
+from engine.evaluation import evaluation_protocol as ep
+from engine.models.events import legal_event
+from engine.models.statistical import stat_arb
 
 
 # --------------------------------------------------------------------------- #
@@ -122,7 +122,7 @@ def test_mutating_prices_after_a_boundary_never_changes_emissions_at_or_before_i
 
 
 _SUBPROCESS_SNIPPET = (
-    "import sys, json; sys.path.insert(0, {repo_root!r}); from fxresearch.models.statistical import stat_arb; "
+    "import sys, json; sys.path.insert(0, {repo_root!r}); from engine.models.statistical import stat_arb; "
     "times, prices = stat_arb.synthetic_input(); "
     "result = stat_arb.run_arrays(times, prices, test_start_index=500, config=stat_arb._fast_config()); "
     "payload = {{'p': result.emissions['p_basket_directional'].round(12).tolist(), "
@@ -190,7 +190,7 @@ def test_run_arrays_rejects_wrong_shaped_prices() -> None:
 
 
 def test_legal_event_load_schema_rejects_unsupported_schema_version(tmp_path: Path) -> None:
-    schema = json.loads((ROOT / "fxresearch" / "config" / "legal-event-schema.json").read_text(encoding="utf-8"))
+    schema = json.loads((ROOT / "engine" / "config" / "legal-event-schema.json").read_text(encoding="utf-8"))
     schema["schema_version"] = "not-a-real-version"
     broken_path = tmp_path / "broken-schema.json"
     broken_path.write_text(json.dumps(schema), encoding="utf-8")

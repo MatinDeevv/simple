@@ -1,8 +1,8 @@
-﻿# 10-Qutrit MPS / TEBD Quantum-Trajectory Experiment
+# 10-Qutrit MPS / TEBD Quantum-Trajectory Experiment
 
 ## Status and boundary
 
-`research/quantum/quantum_mps.py` is an isolated, **experimental non-promotion**
+`engine/quantum/quantum_mps.py` is an isolated, **experimental non-promotion**
 layer.  It applies genuine finite-dimensional quantum mechanics--unitary
 evolution, a Lindblad-jump unraveling, MPS tensor factorization, and SVD bond
 truncation--to a causal statistical encoding of ten FX series.  It does not
@@ -108,8 +108,8 @@ volatility is carried over the gap.
 ## Artifacts and numerical checks
 
 ```text
-python research/quantum/quantum_mps.py --self-check
-python research/quantum/quantum_mps.py --max-steps 500 --chi 16 --seed 20260718
+python engine/quantum/quantum_mps.py --self-check
+python engine/quantum/quantum_mps.py --max-steps 500 --chi 16 --seed 20260718
 ```
 
 The executed replay writes:

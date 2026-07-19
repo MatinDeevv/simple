@@ -1,4 +1,4 @@
-﻿# Quantum-Trajectory Open-System Experiment
+# Quantum-Trajectory Open-System Experiment
 
 ## Boundary and purpose
 
@@ -86,8 +86,8 @@ of the Lindblad generator, MC reconstruction against the exact density map,
 positive reconstructed density, normalized vectors, and same-seed bitwise
 reproducibility.
 
-    python research/quantum/quantum_trajectories.py --self-check
-    python research/quantum/quantum_trajectories.py --max-steps 250000 --trajectories 96 --seed 20260718
+    python engine/quantum/quantum_trajectories.py --self-check
+    python engine/quantum/quantum_trajectories.py --max-steps 250000 --trajectories 96 --seed 20260718
 
 The second command writes the executed results to:
 

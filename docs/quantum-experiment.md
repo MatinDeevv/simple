@@ -1,4 +1,4 @@
-﻿# Open-Quantum-System FX Experiment
+# Open-Quantum-System FX Experiment
 
 ## Boundary
 
@@ -75,8 +75,8 @@ observable.
 
 Command:
 
-    python research/quantum/quantum_lindblad.py --self-check
-    python research/quantum/quantum_lindblad.py --max-steps 250000
+    python engine/quantum/quantum_lindblad.py --self-check
+    python engine/quantum/quantum_lindblad.py --max-steps 250000
 
 | Metric | Result |
 |---|---:|

@@ -1,8 +1,8 @@
-﻿# Ten-Qubit Quantum-Fidelity Kernel Experiment
+# Ten-Qubit Quantum-Fidelity Kernel Experiment
 
 ## Purpose and hard boundary
 
-`research/quantum/quantum_kernel.py` is an isolated, exact classical statevector
+`engine/quantum/quantum_kernel.py` is an isolated, exact classical statevector
 simulation of a 10-qubit quantum feature map plus a quantum-fidelity kernel.
 It uses real quantum-circuit linear algebra, but it is **not** evidence that
 FX markets are physical quantum systems, and it is not a trading model or a
@@ -51,7 +51,7 @@ For samples `x,y`, the kernel is the quantum fidelity kernel:
 
     K(x,y) = | <psi(x) | psi(y)> |^2.
 
-It is formed exactly from the simulated statevectors. A train-only NystrÃ¶m
+It is formed exactly from the simulated statevectors. A train-only Nyström
 approximation chooses 64 seeded landmarks from training states, eigendecomposes
 their kernel, floors only eigenvalues below `1e-10`, and maps into the low-rank
 feature surface. A regularized multiclass kernel-ridge classifier (`ridge=0.01`)
@@ -83,24 +83,24 @@ quantum ontology or authorize trading use.
 Run:
 
 ```text
-python research/quantum/quantum_kernel.py --self-check
-python research/quantum/quantum_kernel.py
+python engine/quantum/quantum_kernel.py --self-check
+python engine/quantum/quantum_kernel.py
 ```
 
 The self-check verifies a 1,024-amplitude normalized state, same-input
 bitwise determinism, fidelity-kernel unit diagonal, PSD tolerance,
-finite NystrÃ¶m features, and classifier probability normalization.
+finite Nyström features, and classifier probability normalization.
 
 The executed runner writes:
 
-- `data/derived/quantum_kernel_minute.parquet` â€” one row for every processed
+- `data/derived/quantum_kernel_minute.parquet` — one row for every processed
   source minute, including gap/stale/unselected reasons; selected holdout rows
   additionally carry model and frozen-baseline probabilities and Brier values.
-- `data/derived/quantum_kernel_daily.parquet` â€” daily aggregation of the
+- `data/derived/quantum_kernel_daily.parquet` — daily aggregation of the
   selected holdout diagnostics.
-- `data/derived/quantum_kernel_summary.json` â€” configuration, causal contract,
+- `data/derived/quantum_kernel_summary.json` — configuration, causal contract,
   hashes, provenance, numerical diagnostics, scores, and promotion decision.
-- `data/derived/quantum_kernel_validation.json` â€” independent self-check data.
+- `data/derived/quantum_kernel_validation.json` — independent self-check data.
 
 The summary contains the fixed seed, config hash, selected-row hashes, encoded
 state hash, canonical manifest/input hashes, and artifact hashes. These expose

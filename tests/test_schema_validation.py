@@ -6,12 +6,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fxresearch.core import run_manifest as rm
-from fxresearch.core import schema_validate as sv
-from fxresearch.models.classical import simulate_integrator as integrator
+from engine.core import run_manifest as rm
+from engine.core import schema_validate as sv
+from engine.models.classical import simulate_integrator as integrator
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_DIR = ROOT / "fxresearch" / "config" / "schemas"
+SCHEMA_DIR = ROOT / "engine" / "config" / "schemas"
 ALL_SCHEMAS = sorted(SCHEMA_DIR.glob("*.schema.json"))
 
 
