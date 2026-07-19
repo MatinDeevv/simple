@@ -30,6 +30,7 @@ from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+_TREE = "head"  # formal default: committed HEAD, never the working tree.
 
 
 def _qiskit_aer_available() -> bool:
@@ -93,7 +94,8 @@ def _git(args: list[str]) -> str:
 
 
 def _tracked_files() -> list[str]:
-    return [line for line in _git(["ls-files"]).splitlines() if line]
+    ref = "HEAD" if _TREE == "head" else _git(["write-tree"]).strip()
+    return [line for line in _git(["ls-tree", "-r", "--name-only", ref]).splitlines() if line]
 
 
 def check_tracked_configuration_files_exist() -> CheckResult:
@@ -119,15 +121,21 @@ def check_tracked_configuration_files_exist() -> CheckResult:
 
 
 def _export_clean_checkout(dest: Path) -> None:
-    """Extract the staged Git tree into ``dest``; never trust working-tree files."""
-    tree = _git(["write-tree"]).strip()
+    """Extract exactly HEAD or the index; never trust worktree/untracked bytes."""
+    tree = "HEAD" if _TREE == "head" else _git(["write-tree"]).strip()
     archive = subprocess.run(["git", "archive", "--format=tar", tree], cwd=ROOT,
                              capture_output=True, check=True).stdout
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as payload:
-        members = [member for member in payload.getmembers()
-                   if not (member.name == "data" or member.name.startswith("data/")
-                           or member.name == "artifacts" or member.name.startswith("artifacts/"))]
-        payload.extractall(dest, members=members, filter="data")
+        for member in payload.getmembers():
+            target = (dest / member.name).resolve()
+            if not target.is_relative_to(dest.resolve()):
+                raise ValueError(f"unsafe archive member: {member.name}")
+            name = member.name.rstrip("/")
+            if name in {"data", "artifacts"} or name.startswith(("data/", "artifacts/")):
+                continue
+            if member.issym() or member.islnk():
+                raise ValueError(f"symlinks are not permitted in verification export: {member.name}")
+            payload.extract(member, dest, set_attrs=False)
 
 
 def check_clean_checkout_imports(tmp_root: Path) -> CheckResult:
@@ -139,7 +147,7 @@ def check_clean_checkout_imports(tmp_root: Path) -> CheckResult:
         return CheckResult("clean-checkout imports", False,
                            "generated data or artifacts were copied into the clean checkout")
     failures: list[str] = []
-    for module in CLEAN_IMPORT_MODULES:
+    for module in _discover_clean_import_modules(clean_dir):
         proc = subprocess.run([sys.executable, "-c", f"import {module}"], cwd=clean_dir,
                               capture_output=True, text=True, timeout=60)
         optional_dependency = OPTIONAL_ENV_MODULES.get(module)
@@ -161,7 +169,7 @@ def check_clean_checkout_imports(tmp_root: Path) -> CheckResult:
             failures.append(f"{module}: import failed:\n{proc.stderr}")
     if failures:
         return CheckResult("clean-checkout imports", False, "; ".join(failures))
-    return CheckResult("clean-checkout imports", True, f"{len(CLEAN_IMPORT_MODULES)} modules")
+    return CheckResult("clean-checkout imports", True, f"{len(_discover_clean_import_modules(clean_dir))} modules")
 
 
 def check_core_dependency_versions() -> CheckResult:
@@ -367,7 +375,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-slow", action="store_true",
                         help="skip pytest/self-check/clean-import runs; only run cheap static checks")
+    parser.add_argument("--tree", choices=("head", "index"), default="head",
+                        help="verify committed HEAD (default) or the staged index; ignores unstaged/untracked files")
     args = parser.parse_args()
+    global _TREE
+    _TREE = args.tree
 
     results: list[CheckResult] = []
     for check in CHEAP_CHECKS:

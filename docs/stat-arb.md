@@ -5,6 +5,24 @@ arena, not an execution system. It uses one-minute BID closes only and makes
 no PnL, tradability, spread, commission, fill, latency, impact, capacity,
 leverage, contract-notional, or market-making claim.
 
+## Entry-policy sensitivity and publication provenance
+
+The frozen primary population remains independent research entries. Secondary
+policy sensitivities are descriptive only: no policy is selected by score.
+For each fixed policy, the three-class conditional comparator is refit using
+only that policy's accepted training rows, then scored on accepted OOS rows.
+`reset_at_oos_start` is the main comparability sensitivity; the separate
+`carry_chronological_state_into_oos` view reports episodes or open targets
+crossing the split. Sparse secondary views report an explicit insufficiency
+status rather than changing the frozen primary result.
+
+Publication writes staging bytes but records hashes under deterministic final
+logical paths. After atomic publication, every output is rehashed against the
+manifest; failed verification removes the unverified run. Frame contracts are
+checked vectorially with strict serialization reserved for representative rows.
+Duplicate source indices are rejected for bootstrap evaluation: one physical
+minute is one primary evaluation observation.
+
 ## Corrective frozen contract: v0.2.1
 
 `stat-arb-arena-0.2.1-corrective-frozen` corrects evaluation semantics that
