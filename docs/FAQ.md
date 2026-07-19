@@ -42,7 +42,7 @@ Only if a predeclared experiment on untouched post-2024 data shows statistically
 
 ### How do I report a bug?
 
-Use the [bug report issue template](https://github.com/Aphelion-Research/Azar/issues/new?template=bug_report.yml).
+Use the [bug report issue template](https://github.com/MatinDeevv/simple/issues/new?template=bug_report.yml).
 
 ### Can I add my own FX model?
 

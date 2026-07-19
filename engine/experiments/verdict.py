@@ -186,6 +186,18 @@ def decide_verdict(
             effective_rank = 0
             why_not_higher.append("this experiment amends a sealed parent plan; amended plans "
                                   "are promotion-blocked by construction")
+        verification = binding.get("independent_verification", {})
+        required_verification = (
+            "dataset_bytes_verified", "evaluation_rows_verified", "metrics_recomputed",
+            "uncertainty_recomputed", "test_receipts_verified", "registry_reconciled",
+            "robustness_plan_complete",
+        )
+        if not all(verification.get(key) is True for key in required_verification):
+            effective_rank = 0
+            missing = [key for key in required_verification
+                       if verification.get(key) is not True]
+            why_not_higher.append(
+                "independent verification is incomplete; missing: " + ", ".join(missing))
         if not binding.get("execution_data_complete", False):
             why_not_higher.append("execution inputs (ask/spread/fill/commission/latency/impact/"
                                   "notional/conversion) are absent from the data contract")

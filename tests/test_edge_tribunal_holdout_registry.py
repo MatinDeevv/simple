@@ -111,6 +111,16 @@ def test_registry_tampering_is_detected(tmp_path: Path) -> None:
         claim(tmp_path, experiment="00000000-0000-4000-8000-000000000008")
 
 
+def test_registry_revision_tampering_is_detected(tmp_path: Path) -> None:
+    claim(tmp_path)
+    registry_path = tmp_path / hr.REGISTRY_FILENAME
+    document = json.loads(registry_path.read_text(encoding="utf-8"))
+    document["revision"] += 1
+    registry_path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(TribunalError, match="integrity hash mismatch"):
+        hr.load_registry(tmp_path)
+
+
 def test_concurrent_claims_permit_only_one_clean_claimant(tmp_path: Path) -> None:
     outcomes: list[str] = []
     lock = threading.Lock()
@@ -174,6 +184,26 @@ def test_unused_registration_then_exact_claim_binds_it(tmp_path: Path) -> None:
     result = claim(tmp_path)
     assert result["holdout_id"] == "11111111-1111-4111-8111-111111111111"
     assert result["status"] == hr.SEALED_FOR_EXPERIMENT
+
+
+def test_release_restores_pre_registered_unused_entry(tmp_path: Path) -> None:
+    document = hr.load_registry(tmp_path)
+    holdout_id = "11111111-1111-4111-8111-111111111111"
+    document["entries"].append({
+        "holdout_id": holdout_id, "dataset_fingerprint": FINGERPRINT,
+        "universe": ["EURUSD", "GBPUSD"], "interval_start_utc": START,
+        "interval_end_utc": END, "target_contract_sha256": TARGET,
+        "model_family": "model-v1", "hypothesis_family": "family-a",
+        "status": hr.UNUSED, "experiment_id": None, "plan_sha256": None,
+        "claimed_at_utc": None})
+    hr._save_registry(tmp_path, document)
+    result = claim(tmp_path)
+    assert hr.release_claim_if_owned(tmp_path, holdout_id=result["holdout_id"],
+                                     experiment_id="00000000-0000-4000-8000-000000000001",
+                                     plan_sha256=PLAN_HASH)
+    restored = hr.load_registry(tmp_path)["entries"][0]
+    assert restored["status"] == hr.UNUSED
+    assert restored["experiment_id"] is None
 
 
 def test_many_registered_holdouts_overlap_query(tmp_path: Path) -> None:

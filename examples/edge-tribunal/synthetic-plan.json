@@ -29,6 +29,7 @@
     "configuration_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
     "evidence_producer_command": "python -m engine.models.statistical.stat_arb --emit-tribunal-evidence",
     "allowed_implementation_files": ["engine/models/statistical/stat_arb.py"]
+    ,"required_test_commands": [["python", "-m", "pytest", "tests", "-q"]]
   },
   "data_contract": {
     "universe": ["EURUSD", "GBPUSD"],
@@ -113,18 +114,19 @@
       "non_overlapping_basket",
       "one_representative_per_target_cluster"
     ],
+    "required_split_boundary_policies": ["reset_at_oos_start", "carry_chronological_state_into_oos"],
     "required_block_lengths": [30, 120, 390],
     "required_perturbations": [
       "baseline", "delay_entry_1", "delay_entry_2", "probability_rounding",
       "missing_bar_injection", "reduced_population", "fallback_only_stress"
     ],
     "mandatory_cells": [
-      "policy=independent_research_entries|boundary=reset_at_oos_start|block=120",
-      "policy=first_entry_per_signal_episode|boundary=reset_at_oos_start|block=120",
-      "policy=non_overlapping_global|boundary=reset_at_oos_start|block=120",
-      "policy=non_overlapping_component|boundary=reset_at_oos_start|block=120",
-      "policy=non_overlapping_basket|boundary=reset_at_oos_start|block=120",
-      "policy=one_representative_per_target_cluster|boundary=reset_at_oos_start|block=120"
+      "entry_policy=independent_research_entries|split_boundary=reset_at_oos_start|block_length=120|time_slice=whole_oos|regime=all|perturbation=baseline",
+      "entry_policy=first_entry_per_signal_episode|split_boundary=reset_at_oos_start|block_length=120|time_slice=whole_oos|regime=all|perturbation=baseline",
+      "entry_policy=non_overlapping_global|split_boundary=reset_at_oos_start|block_length=120|time_slice=whole_oos|regime=all|perturbation=baseline",
+      "entry_policy=non_overlapping_component|split_boundary=reset_at_oos_start|block_length=120|time_slice=whole_oos|regime=all|perturbation=baseline",
+      "entry_policy=non_overlapping_basket|split_boundary=reset_at_oos_start|block_length=120|time_slice=whole_oos|regime=all|perturbation=baseline",
+      "entry_policy=one_representative_per_target_cluster|split_boundary=reset_at_oos_start|block_length=120|time_slice=whole_oos|regime=all|perturbation=baseline"
     ],
     "minimum_pass_proportion": 0.7,
     "insufficient_allowed_cells": [],

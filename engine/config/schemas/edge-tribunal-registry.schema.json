@@ -2,9 +2,10 @@
   "schema_version": "edge-tribunal-holdout-registry-v1",
   "title": "Edge Tribunal holdout registry (engine/experiments/holdout_registry.py)",
   "type": "object",
-  "required": ["registry_version", "entries", "registry_sha256"],
+  "required": ["registry_version", "revision", "entries", "registry_sha256"],
   "properties": {
     "registry_version": {"type": "string", "enum": ["edge-tribunal-holdout-registry-v1"]},
+    "revision": {"type": "integer"},
     "entries": {
       "type": "array",
       "items": {
@@ -30,6 +31,10 @@
           "experiment_id": {"type": ["string", "null"]},
           "plan_sha256": {"type": ["string", "null"]},
           "claimed_at_utc": {"type": ["string", "null"]}
+          ,"claim_origin": {"type": "string", "enum": ["created", "pre_registered"]}
+          ,"claim_revision": {"type": "integer"}
+          ,"claim_token": {"type": "string"}
+          ,"previous_registry_sha256": {"type": "string"}
         },
         "additionalProperties": false
       }

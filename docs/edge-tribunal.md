@@ -1,6 +1,32 @@
 Edge Tribunal: Purpose and Non-Proofs
 ====================================
 
+Independent verification boundary
+---------------------------------
+
+Dataset identity is split into a full descriptive manifest hash, a logical
+layout hash, and a content fingerprint. The content fingerprint excludes
+names, prose, paths, and file ordering, so cosmetic manifest edits cannot make
+identical bytes untouched again. When ``bind_data`` receives physical file
+bindings and an allowed dataset root, the Tribunal hashes regular non-symlink
+files itself and checks caller hashes and sizes.
+
+Evidence ingestion also has a strict physical-artifact path. It hashes bound
+artifacts under an allowed root, parses canonical JSONL evaluation rows,
+validates probability triples row by row, and independently recomputes Brier
+score, log loss, class counts, and derivable concentrations. Producer summaries
+must match within the documented tolerance.
+
+Legacy v1 evidence remains readable for forensic compatibility. Without
+physical bindings it is self-attested, not independently verified. Independent
+uncertainty recomputation and physical test-receipt verification remain open
+limitations in this version.
+
+Holdout claims are idempotent for the exact experiment, plan, target, content
+fingerprint, and interval. Failed snapshot publication compensates a newly
+created claim only while ownership still matches. Reconciliation fails closed
+on mismatched identities and consumption retries are idempotent.
+
 The Edge Tribunal is a governance engine for preregistered falsification and research promotion.
 It enforces an irreversible state machine, cryptographic artifact chaining of artifact history, and strict
 separation between research decisions and trading authorizations.

@@ -32,12 +32,47 @@ EXECUTION_DATA_FIELDS: tuple[str, ...] = (
 )
 
 _MANIFEST_REQUIRED_FIELDS: tuple[str, ...] = (
-    "dataset_name", "provenance", "files", "minimum_timestamp_utc",
-    "maximum_timestamp_utc", "pair_scope", "frequency", "timestamp_timezone",
+    "dataset_name", "provenance", "provenance_claims", "files", "minimum_timestamp_utc",
+    "maximum_timestamp_utc", "pair_scope", "pair_order", "frequency", "timestamp_timezone",
     "columns", "missing_row_count", "duplicate_row_count", "segment_count",
     "gap_count", "price_side", "prior_inspection_cutoff_utc", "execution_data",
     "untouched_claim", "untouched_evidence",
 )
+
+
+def dataset_content_fingerprint(manifest: dict[str, Any]) -> str:
+    """Return the holdout identity, excluding descriptive/layout metadata.
+
+    Logical names, provenance prose, dataset names, and file ordering cannot
+    make identical bytes untouched again.  ``size_bytes`` and ``instrument``
+    are included when supplied by a physically verified manifest.
+    """
+    # Byte hashes are the only per-file values that identify content. Caller
+    # row counts, sizes, instrument labels, and paths are separately committed
+    # by the manifest/layout hashes and cannot mint a fresh holdout identity.
+    files = sorted(item["sha256"] for item in manifest["files"])
+    invariant = {
+        "files": files,
+        "pair_scope": sorted(manifest["pair_scope"]),
+        "pair_order": list(manifest["pair_order"]),
+        "frequency": manifest["frequency"],
+        "price_side": manifest["price_side"],
+        "timestamp_timezone": manifest["timestamp_timezone"],
+        "minimum_timestamp_utc": normalize_utc_timestamp(manifest["minimum_timestamp_utc"]),
+        "maximum_timestamp_utc": normalize_utc_timestamp(manifest["maximum_timestamp_utc"]),
+        "columns": sorted(manifest["columns"]),
+        "schema_version": manifest.get("schema_version"),
+    }
+    return sha256_payload(invariant)
+
+
+def dataset_layout_sha256(manifest: dict[str, Any]) -> str:
+    entries = [
+        {"logical_path": normalize_logical_path(item["logical_path"]),
+         "sha256": item["sha256"]}
+        for item in manifest["files"]
+    ]
+    return sha256_payload(sorted(entries, key=lambda item: item["logical_path"]))
 
 
 def _nonnegative_int(value: Any) -> bool:
@@ -58,6 +93,9 @@ def validate_dataset_manifest(manifest: Any) -> list[str]:
     provenance = manifest["provenance"]
     if not isinstance(provenance, str) or not provenance.strip():
         errors.append("provenance must be a non-empty string describing dataset origin")
+    if not isinstance(manifest["provenance_claims"], list) or not all(
+            isinstance(item, str) and item for item in manifest["provenance_claims"]):
+        errors.append("provenance_claims must be a list of non-empty strings")
     files = manifest["files"]
     if not isinstance(files, list) or not files:
         errors.append("files must be a non-empty list")
@@ -89,6 +127,9 @@ def validate_dataset_manifest(manifest: Any) -> list[str]:
     if not isinstance(manifest["pair_scope"], list) or \
             not all(isinstance(item, str) and item for item in manifest["pair_scope"]):
         errors.append("pair_scope must be a list of non-empty strings")
+    if not isinstance(manifest["pair_order"], list) or \
+            not all(isinstance(item, str) and item for item in manifest["pair_order"]):
+        errors.append("pair_order must be a list of non-empty strings")
     if not isinstance(manifest["columns"], list) or \
             not all(isinstance(item, str) and item for item in manifest["columns"]):
         errors.append("columns must be a list of non-empty strings")
@@ -101,6 +142,8 @@ def validate_dataset_manifest(manifest: Any) -> list[str]:
                 errors.append(f"execution_data.{field} must be a boolean")
     if not isinstance(manifest["untouched_claim"], bool):
         errors.append("untouched_claim must be a boolean")
+    elif manifest["untouched_claim"] is not True:
+        errors.append("untouched_claim must be exactly true for a clean dataset binding")
     if not isinstance(manifest["untouched_evidence"], str) or not manifest["untouched_evidence"].strip():
         errors.append("untouched_evidence must be a non-empty string")
     return errors
@@ -122,9 +165,15 @@ def contract_mismatches(plan: dict[str, Any], dataset_manifest: dict[str, Any]) 
             f"vs plan {contract['price_side']!r}")
     if sorted(dataset_manifest["pair_scope"]) != sorted(contract["universe"]):
         mismatches.append("pair_scope does not match the plan universe")
+    if dataset_manifest["pair_order"] != contract["pair_order"]:
+        mismatches.append("pair_order does not exactly match the plan pair_order")
     missing_columns = sorted(set(contract["required_columns"]) - set(dataset_manifest["columns"]))
     if missing_columns:
         mismatches.append(f"dataset lacks required columns: {missing_columns}")
+    missing_provenance = sorted(set(contract["dataset_provenance_requirements"])
+                                - set(dataset_manifest["provenance_claims"]))
+    if missing_provenance:
+        mismatches.append(f"dataset lacks required provenance claims: {missing_provenance}")
 
     manifest_min = normalize_utc_timestamp(dataset_manifest["minimum_timestamp_utc"])
     manifest_max = normalize_utc_timestamp(dataset_manifest["maximum_timestamp_utc"])
@@ -192,6 +241,9 @@ def build_dataset_binding(
         "plan_sha256": seal["plan_sha256"],
         "seal_sha256": seal["seal_sha256"],
         "dataset_manifest_sha256": sha256_payload(dataset_manifest),
+        "dataset_content_fingerprint": dataset_content_fingerprint(dataset_manifest),
+        "dataset_layout_sha256": dataset_layout_sha256(dataset_manifest),
+        "dataset_bytes_verified": bool(dataset_manifest.get("dataset_bytes_verified", False)),
         "dataset_name": dataset_manifest["dataset_name"],
         "provenance": dataset_manifest["provenance"],
         "files": [
@@ -199,6 +251,7 @@ def build_dataset_binding(
                 "logical_path": normalize_logical_path(entry["logical_path"]),
                 "sha256": entry["sha256"],
                 "row_count": entry["row_count"],
+                **({"size_bytes": entry["size_bytes"]} if "size_bytes" in entry else {}),
             }
             for entry in dataset_manifest["files"]
         ],
@@ -221,6 +274,8 @@ def build_dataset_binding(
         "untouched_claim": dataset_manifest["untouched_claim"],
         "untouched_evidence": dataset_manifest["untouched_evidence"],
         "holdout_id": holdout_claim["holdout_id"],
+        "holdout_claim_token": holdout_claim.get("claim_token"),
+        "holdout_registry_revision": holdout_claim.get("registry_revision"),
         "holdout_claim_status": holdout_claim["status"],
         "holdout_reuse_kind": holdout_claim["reuse_kind"],
         "promotion_blocked_by_holdout": bool(holdout_claim.get("promotion_blocked")),

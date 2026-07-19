@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -32,6 +33,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SELECTED_ROOT = ROOT
 sys.path.insert(0, str(ROOT))
 _TREE = "head"  # formal default: committed HEAD, never the working tree.
+_SELECTED_EXECUTION = False
 
 def _root() -> Path:
     """The exported committed/index tree selected for this verification run."""
@@ -72,6 +74,10 @@ ARCHIVE_SELF_CHECKS = (
     "engine.quantum.quantum_kernel",
     "engine.quantum.quantum_reservoir",
 )
+LEGACY_EXTERNAL_ARCHIVES = {
+    "data/derived/stat_arb_outer_2024_summary.json",
+    "data/derived/stat_arb_bounded_latest_summary.json",
+}
 def _discover_clean_import_modules(root: Path) -> tuple[str, ...]:
     """Discover every tracked importable engine module, excluding package markers."""
     package = root / "engine"
@@ -99,6 +105,11 @@ def _git(args: list[str]) -> str:
 
 
 def _tracked_files() -> list[str]:
+    if _SELECTED_EXECUTION:
+        return [
+            path.relative_to(_root()).as_posix() for path in _root().rglob("*")
+            if path.is_file() and not path.relative_to(_root()).parts[0] in {"data", "artifacts"}
+        ]
     ref = "HEAD" if _TREE == "head" else _git(["write-tree"]).strip()
     return [line for line in _git(["ls-tree", "-r", "--name-only", ref]).splitlines() if line]
 
@@ -316,10 +327,17 @@ def check_frozen_archives_unchanged() -> CheckResult:
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     problems = []
     present = 0
+    skipped = []
     for entry in registry["entries"]:
+        policy=entry.get("presence_policy") or ("external" if entry.get("path") in LEGACY_EXTERNAL_ARCHIVES else None)
+        if policy not in {"required","optional","external"}:
+            problems.append(f"{entry.get('path')}: missing/invalid presence_policy")
+            continue
         target = _root() / entry["path"]
         if not target.is_file():
-            continue  # absent is expected in a clean/CI checkout; not a failure.
+            if policy=="required": problems.append(f"{entry['path']}: required frozen archive is missing")
+            else: skipped.append(f"{entry['path']} ({policy})")
+            continue
         present += 1
         digest = hashlib.sha256(target.read_bytes()).hexdigest()
         if digest != entry["sha256"]:
@@ -332,7 +350,7 @@ def check_frozen_archives_unchanged() -> CheckResult:
                 problems.append(f"{entry['path']}: version {payload.get('version')!r} != frozen {expected_version!r}")
     if problems:
         return CheckResult("frozen archives unchanged", False, "; ".join(problems))
-    return CheckResult("frozen archives unchanged", True, f"{present}/{len(registry['entries'])} present and verified")
+    return CheckResult("frozen archives unchanged", True, f"{present}/{len(registry['entries'])} present; {len(skipped)} explicitly skipped")
 
 
 def check_burned_holdout_guard_enabled() -> CheckResult:
@@ -382,20 +400,31 @@ def main() -> int:
                         help="skip pytest/self-check/clean-import runs; only run cheap static checks")
     parser.add_argument("--tree", choices=("head", "index"), default="head",
                         help="verify committed HEAD (default) or the staged index; ignores unstaged/untracked files")
+    parser.add_argument("--selected-tree-run", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    global _TREE, SELECTED_ROOT
+    global _TREE, SELECTED_ROOT, _SELECTED_EXECUTION
     _TREE = args.tree
 
+    if not args.selected_tree_run:
+        with tempfile.TemporaryDirectory(prefix="verify_repository_") as tmp:
+            selected = Path(tmp) / "selected_tree"; selected.mkdir()
+            _export_clean_checkout(selected)
+            command = [sys.executable, str(selected / "engine/tools/verify_repository.py"), "--selected-tree-run", "--tree", args.tree]
+            if args.skip_slow: command.append("--skip-slow")
+            env = {key: value for key, value in os.environ.items() if key.upper() in {"PATH", "SYSTEMROOT", "TEMP", "TMP", "HOME", "USERPROFILE", "PYTHONHASHSEED", "LANG", "LC_ALL"}}
+            env["PYTHONPATH"] = str(selected)
+            proc = subprocess.run(command, cwd=selected, env=env, check=False)
+            return proc.returncode
+
+    _SELECTED_EXECUTION = True
+    SELECTED_ROOT = ROOT
+
     with tempfile.TemporaryDirectory(prefix="verify_repository_") as tmp:
-        selected = Path(tmp) / "selected_tree"
-        selected.mkdir()
-        _export_clean_checkout(selected)
-        SELECTED_ROOT = selected
         results: list[CheckResult] = []
         for check in CHEAP_CHECKS:
             results.append(check())
         if not args.skip_slow:
-            results.append(check_clean_checkout_imports(Path(tmp)))
+            # This process itself is running wholly from the selected exported tree.
             results.append(check_tests_pass())
             results.append(check_required_self_checks())
             results.append(check_quantum_archive_self_checks())

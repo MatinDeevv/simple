@@ -48,28 +48,13 @@ def run_pipeline_to_bound(tmp_path: Path, *, plan: dict | None = None,
 
 def make_evidence(plan: dict, seal: dict, binding: dict) -> dict[str, Any]:
     """A fully valid evidence bundle whose gates all pass."""
+    from engine.experiments.robustness import planned_cell_registry
     policies = plan["entry_policy_contract"]["sensitivity_populations"]
-    boundaries = plan["entry_policy_contract"]["split_boundary_policies"]
-    cells = []
-    for policy in policies:
-        for boundary in boundaries:
-            cells.append({
-                "cell_id": f"policy={policy}|boundary={boundary}|block=120",
-                "dimensions": {"entry_policy": policy, "split_boundary": boundary,
-                               "block_length": 120, "time_slice": "whole_oos",
-                               "regime": "all", "perturbation": "baseline"},
-                "status": "scored", "sample_count": 300, "target_clusters": 120,
-                "brier_improvement": 0.003, "log_loss_improvement": 0.006})
-    for block in (30, 390):
-        cells.append({
-            "cell_id": f"policy=independent_research_entries|"
-                       f"boundary=reset_at_oos_start|block={block}",
-            "dimensions": {"entry_policy": "independent_research_entries",
-                           "split_boundary": "reset_at_oos_start",
-                           "block_length": block, "time_slice": "whole_oos",
-                           "regime": "all", "perturbation": "baseline"},
-            "status": "scored", "sample_count": 300, "target_clusters": 120,
-            "brier_improvement": 0.0028, "log_loss_improvement": 0.0055})
+    cells = [{"cell_id": cell_id, "dimensions": dimensions, "status": "scored",
+              "sample_count": 300, "target_clusters": 120,
+              "brier_improvement": 0.003, "log_loss_improvement": 0.006}
+             for cell_id, dimensions in
+             planned_cell_registry(plan["robustness_contract"]).items()]
     return {
         "evidence_version": "edge-tribunal-evidence-v1",
         "experiment": {
@@ -350,7 +335,22 @@ def test_duplicate_robustness_cell_ids_fail(bound: dict[str, Any]) -> None:
     assert any("duplicates" in error for error in _errors(bound, evidence))
 
 
+def test_different_cell_ids_cannot_reuse_identical_dimensions(bound: dict[str, Any]) -> None:
+    evidence = make_evidence(bound["plan"], bound["seal"], bound["binding"])
+    evidence["robustness"]["cells"][1]["dimensions"] = dict(
+        evidence["robustness"]["cells"][0]["dimensions"])
+    errors = _errors(bound, evidence)
+    assert any("cell_id does not match" in error for error in errors)
+
+
 def test_load_strict_json_rejects_duplicate_keys() -> None:
     from engine.experiments.errors import CanonicalJsonError
     with pytest.raises(CanonicalJsonError, match="duplicate"):
         load_strict_json_text('{"a": 1, "a": 2}')
+
+
+def test_producer_cannot_forge_independent_verification(bound: dict[str, Any]) -> None:
+    evidence = make_evidence(bound["plan"], bound["seal"], bound["binding"])
+    evidence["independent_verification"] = {"metrics_recomputed": True}
+    with pytest.raises(EvidenceValidationError, match="Tribunal-generated"):
+        et.record_evidence(bound["experiment_dir"], evidence, timestamp_utc=T_RECORD)
