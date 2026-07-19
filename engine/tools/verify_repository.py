@@ -29,8 +29,13 @@ from pathlib import Path
 from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[2]
+SELECTED_ROOT = ROOT
 sys.path.insert(0, str(ROOT))
 _TREE = "head"  # formal default: committed HEAD, never the working tree.
+
+def _root() -> Path:
+    """The exported committed/index tree selected for this verification run."""
+    return SELECTED_ROOT
 
 
 def _qiskit_aer_available() -> bool:
@@ -108,13 +113,13 @@ def check_tracked_configuration_files_exist() -> CheckResult:
         ".github/workflows/ci.yml",
     ]
     tracked = set(_tracked_files())
-    missing = [path for path in required if path not in tracked or not (ROOT / path).is_file()]
+    missing = [path for path in required if path not in tracked or not (_root() / path).is_file()]
     if missing:
         return CheckResult("tracked configuration files exist", False, f"missing: {missing}")
     for path in required:
         if path.endswith(".json"):
             try:
-                json.loads((ROOT / path).read_text(encoding="utf-8"))
+                json.loads((_root() / path).read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as exc:
                 return CheckResult("tracked configuration files exist", False, f"{path} invalid JSON: {exc}")
     return CheckResult("tracked configuration files exist", True)
@@ -133,8 +138,8 @@ def _export_clean_checkout(dest: Path) -> None:
             name = member.name.rstrip("/")
             if name in {"data", "artifacts"} or name.startswith(("data/", "artifacts/")):
                 continue
-            if member.issym() or member.islnk():
-                raise ValueError(f"symlinks are not permitted in verification export: {member.name}")
+            if member.issym() or member.islnk() or member.isdev():
+                raise ValueError(f"links and device entries are not permitted in verification export: {member.name}")
             payload.extract(member, dest, set_attrs=False)
 
 
@@ -174,7 +179,7 @@ def check_clean_checkout_imports(tmp_root: Path) -> CheckResult:
 
 def check_core_dependency_versions() -> CheckResult:
     pinned: dict[str, str] = {}
-    for line in (ROOT / "requirements-core.txt").read_text(encoding="utf-8").splitlines():
+    for line in (_root() / "requirements-core.txt").read_text(encoding="utf-8").splitlines():
         line = line.split("#", 1)[0].strip()
         match = re.match(r"^([A-Za-z0-9_.-]+)==([0-9A-Za-z_.\-+]+)$", line)
         if match:
@@ -196,14 +201,14 @@ def check_core_dependency_versions() -> CheckResult:
 
 
 def check_tests_pass() -> CheckResult:
-    proc = subprocess.run([sys.executable, "-m", "pytest", "tests", "-q"], cwd=ROOT,
+    proc = subprocess.run([sys.executable, "-m", "pytest", "tests", "-q"], cwd=_root(),
                           capture_output=True, text=True, timeout=1800)
     tail = "\n".join(proc.stdout.splitlines()[-15:])
     return CheckResult("pytest tests/", proc.returncode == 0, tail)
 
 
 def _run_self_check(module: str) -> tuple[bool, str]:
-    proc = subprocess.run([sys.executable, "-m", module, "--self-check"], cwd=ROOT,
+    proc = subprocess.run([sys.executable, "-m", module, "--self-check"], cwd=_root(),
                           capture_output=True, text=True, timeout=600)
     if proc.returncode != 0:
         return False, proc.stderr[-500:] or proc.stdout[-500:]
@@ -248,7 +253,7 @@ def check_quantum_aer_self_check() -> CheckResult:
 
 
 def check_state_schemas_valid() -> CheckResult:
-    schema_dir = ROOT / "engine" / "config" / "schemas"
+    schema_dir = _root() / "engine" / "config" / "schemas"
     if not schema_dir.is_dir():
         return CheckResult("state schemas valid", False, "config/schemas/ is missing")
     schemas = sorted(schema_dir.glob("*.schema.json"))
@@ -272,11 +277,11 @@ def check_state_schemas_valid() -> CheckResult:
 
 def check_shared_instrument_order_consistent() -> CheckResult:
     from engine.core.contracts import canonical_pair_order
-    pairs = canonical_pair_order(ROOT)
+    pairs = canonical_pair_order(_root())
     if len(pairs) != 10 or len(set(pairs)) != 10:
         return CheckResult("shared instrument order", False, f"unexpected pair set: {pairs}")
     from engine.tools.repo_pair_order_scan import find_duplicate_pair_order_definitions
-    duplicates = find_duplicate_pair_order_definitions(ROOT, pairs)
+    duplicates = find_duplicate_pair_order_definitions(_root(), pairs)
     if duplicates:
         return CheckResult("shared instrument order", False, f"duplicate hardcoded pair sequences: {duplicates}")
     return CheckResult("shared instrument order", True, f"{pairs}")
@@ -285,7 +290,7 @@ def check_shared_instrument_order_consistent() -> CheckResult:
 def check_no_null_bytes_in_tracked_files() -> CheckResult:
     offenders = []
     for relative in _tracked_files():
-        path = ROOT / relative
+        path = _root() / relative
         if path.suffix.lower() not in TEXT_EXTENSIONS or not path.is_file():
             continue
         if b"\x00" in path.read_bytes():
@@ -298,21 +303,21 @@ def check_no_null_bytes_in_tracked_files() -> CheckResult:
 def check_no_required_source_file_is_empty() -> CheckResult:
     empty = []
     for directory in ("engine", "tests"):
-        for path in (ROOT / directory).rglob("*.py"):
+        for path in (_root() / directory).rglob("*.py"):
             if not path.read_text(encoding="utf-8").strip():
-                empty.append(str(path.relative_to(ROOT)))
+                empty.append(str(path.relative_to(_root())))
     if empty:
         return CheckResult("no empty required source files", False, f"{empty}")
     return CheckResult("no empty required source files", True)
 
 
 def check_frozen_archives_unchanged() -> CheckResult:
-    registry_path = ROOT / "engine" / "config" / "frozen-archives.json"
+    registry_path = _root() / "engine" / "config" / "frozen-archives.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     problems = []
     present = 0
     for entry in registry["entries"]:
-        target = ROOT / entry["path"]
+        target = _root() / entry["path"]
         if not target.is_file():
             continue  # absent is expected in a clean/CI checkout; not a failure.
         present += 1
@@ -331,7 +336,7 @@ def check_frozen_archives_unchanged() -> CheckResult:
 
 
 def check_burned_holdout_guard_enabled() -> CheckResult:
-    data_derived = ROOT / "data" / "derived"
+    data_derived = _root() / "data" / "derived"
     def snapshot(directory: Path) -> dict[str, str]:
         if not directory.is_dir():
             return {}
@@ -341,7 +346,7 @@ def check_burned_holdout_guard_enabled() -> CheckResult:
         }
 
     before = snapshot(data_derived)
-    proc = subprocess.run([sys.executable, "-m", "engine.models.statistical.stat_arb"], cwd=ROOT,
+    proc = subprocess.run([sys.executable, "-m", "engine.models.statistical.stat_arb"], cwd=_root(),
                           capture_output=True, text=True, timeout=60)
     after = snapshot(data_derived)
     if after != before:
@@ -378,20 +383,23 @@ def main() -> int:
     parser.add_argument("--tree", choices=("head", "index"), default="head",
                         help="verify committed HEAD (default) or the staged index; ignores unstaged/untracked files")
     args = parser.parse_args()
-    global _TREE
+    global _TREE, SELECTED_ROOT
     _TREE = args.tree
 
-    results: list[CheckResult] = []
-    for check in CHEAP_CHECKS:
-        results.append(check())
-
-    if not args.skip_slow:
-        with tempfile.TemporaryDirectory(prefix="verify_repository_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="verify_repository_") as tmp:
+        selected = Path(tmp) / "selected_tree"
+        selected.mkdir()
+        _export_clean_checkout(selected)
+        SELECTED_ROOT = selected
+        results: list[CheckResult] = []
+        for check in CHEAP_CHECKS:
+            results.append(check())
+        if not args.skip_slow:
             results.append(check_clean_checkout_imports(Path(tmp)))
-        results.append(check_tests_pass())
-        results.append(check_required_self_checks())
-        results.append(check_quantum_archive_self_checks())
-        results.append(check_quantum_aer_self_check())
+            results.append(check_tests_pass())
+            results.append(check_required_self_checks())
+            results.append(check_quantum_archive_self_checks())
+            results.append(check_quantum_aer_self_check())
 
     failed = False
     for result in results:
