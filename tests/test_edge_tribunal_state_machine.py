@@ -109,9 +109,11 @@ def test_repeated_verdict_issuance_fails(tmp_path: Path) -> None:
     evidence = finalize_evidence(
         make_evidence(context["plan"], context["seal"], context["binding"]))
     et.record_evidence(context["experiment_dir"], evidence, timestamp_utc=T_RECORD)
-    et.evaluate(context["experiment_dir"], timestamp_utc=T_EVAL)
+    et.evaluate(context["experiment_dir"], registry_root=context["registry_root"],
+                timestamp_utc=T_EVAL)
     with pytest.raises(InvalidStateTransitionError):
-        et.evaluate(context["experiment_dir"], timestamp_utc="2026-01-02T00:30:00+00:00")
+        et.evaluate(context["experiment_dir"], registry_root=context["registry_root"],
+                    timestamp_utc="2026-01-02T00:30:00+00:00")
 
 
 def test_sealed_plan_mutation_is_detected(tmp_path: Path) -> None:
@@ -126,7 +128,7 @@ def test_sealed_plan_mutation_is_detected(tmp_path: Path) -> None:
         make_evidence(context["plan"], context["seal"], context["binding"]))
     with pytest.raises(PlanMutationError):
         et.record_evidence(experiment_dir, evidence, timestamp_utc=T_RECORD)
-    result = et.verify_experiment(experiment_dir)
+    result = et.verify_experiment(experiment_dir, registry_root=context["registry_root"])
     assert not result["ok"]
     assert any("sealed" in problem or "seal" in problem for problem in result["problems"])
 
@@ -135,7 +137,7 @@ def test_verification_is_read_only(tmp_path: Path) -> None:
     context = run_pipeline_to_bound(tmp_path)
     experiment_dir = context["experiment_dir"]
     before = et.show_state(experiment_dir)
-    result = et.verify_experiment(experiment_dir)
+    result = et.verify_experiment(experiment_dir, registry_root=context["registry_root"])
     assert result["ok"]
     after = et.show_state(experiment_dir)
     assert before == after
@@ -168,3 +170,21 @@ def test_artifacts_are_never_replaced_across_versions(tmp_path: Path) -> None:
     assert not (versions[0] / "seal.json").exists()
     assert (versions[1] / "seal.json").exists()
     assert (versions[2] / "dataset-binding.json").exists()
+
+
+def test_snapshot_history_detects_old_mutation_deletion_and_current_rollback(tmp_path: Path) -> None:
+    context = run_pipeline_to_bound(tmp_path)
+    experiment = context["experiment_dir"]
+    versions = sorted((experiment / "versions").iterdir())
+    original = (versions[0] / "plan.json").read_bytes()
+    (versions[0] / "plan.json").write_bytes(original + b" ")
+    assert not et.verify_experiment(experiment,
+                                    registry_root=context["registry_root"])["ok"]
+    (versions[0] / "plan.json").write_bytes(original)
+    removed = versions[1].rename(versions[1].with_name("removed"))
+    assert not et.verify_experiment(experiment,
+                                    registry_root=context["registry_root"])["ok"]
+    removed.rename(versions[1])
+    (experiment / et.CURRENT_POINTER).write_text(versions[0].name + "\n", encoding="utf-8")
+    assert not et.verify_experiment(experiment,
+                                    registry_root=context["registry_root"])["ok"]

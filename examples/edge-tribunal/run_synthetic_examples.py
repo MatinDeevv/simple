@@ -14,6 +14,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from engine.experiments import edge_tribunal as tribunal
 from engine.experiments.canonical import sha256_payload, strict_json_text
+from engine.experiments.robustness import planned_cell_registry
 
 HERE = Path(__file__).resolve().parent
 T_INIT = "2026-01-02T00:00:00+00:00"
@@ -60,13 +61,24 @@ def run_scenario(root: Path, scenario: dict[str, str]) -> dict[str, Any]:
     plan = load("synthetic-plan.json")
     manifest = load("synthetic-dataset.json")
     evidence = load("synthetic-evidence.json")
+    evidence["robustness"]["cells"] = [
+        {"cell_id": cell_id, "dimensions": dimensions, "status": "scored",
+         "sample_count": 300, "target_clusters": 120,
+         "brier_improvement": 0.003, "log_loss_improvement": 0.006}
+        for cell_id, dimensions in planned_cell_registry(
+            plan["robustness_contract"]).items()]
 
     tribunal.init_experiment(experiment_dir, plan, timestamp_utc=T_INIT)
-    tribunal.seal_experiment(experiment_dir, timestamp_utc=T_SEAL)
-    tribunal.bind_data(
+    seal = tribunal.seal_experiment(experiment_dir, timestamp_utc=T_SEAL)
+    binding = tribunal.bind_data(
         experiment_dir, manifest, registry_root=registry_root,
         timestamp_utc=T_BIND)
+    evidence["experiment"]["binding_sha256"] = binding["binding_sha256"]
+    evidence["experiment"]["plan_sha256"] = seal["plan_sha256"]
+    evidence["experiment"]["seal_sha256"] = seal["seal_sha256"]
+    evidence["dataset"]["dataset_binding_sha256"] = binding["binding_sha256"]
     mutate(evidence, scenario["mutation"])
+    finalize(evidence)
     tribunal.record_evidence(
         experiment_dir, evidence, timestamp_utc=T_RECORD)
 

@@ -1,6 +1,12 @@
 Preregistered Experiments: Falsifiable Hypotheses and Execution Realism
 =======================================================================
 
+Dataset names and provenance prose are not untouched-data identities. Reuse
+detection is keyed to invariant content evidence and the holdout interval;
+renaming a file, changing a title, or rewriting provenance cannot restore
+untouched status. Prose asserting that data are untouched is an assertion, not
+proof.
+
 This document explains the core principles that govern preregistered experiments
 in the Edge Tribunal framework, focusing on falsifiability, pre-result gating,
 holdout usage, amendment policies, multiplicity, dependence, and the separate

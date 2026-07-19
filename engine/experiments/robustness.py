@@ -10,10 +10,32 @@ treats an insufficient cell as a pass.
 from __future__ import annotations
 
 import statistics
+import itertools
 from typing import Any
 
 from engine.experiments.canonical import is_finite_number
 from engine.experiments.errors import GateEvaluationError
+
+DIMENSION_KEYS = ("entry_policy", "split_boundary", "block_length", "time_slice",
+                  "regime", "perturbation")
+
+
+def cell_id_for_dimensions(dimensions: dict[str, Any]) -> str:
+    if set(dimensions) != set(DIMENSION_KEYS):
+        raise GateEvaluationError("robustness dimensions are incomplete or unexpected")
+    return "|".join(f"{key}={dimensions[key]}" for key in DIMENSION_KEYS)
+
+
+def planned_cell_registry(contract: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    sets = (contract["required_policy_slices"],
+            contract["required_split_boundary_policies"],
+            contract["required_block_lengths"], contract["required_time_slices"],
+            contract["required_regime_slices"], contract["required_perturbations"])
+    result: dict[str, dict[str, Any]] = {}
+    for values in itertools.product(*sets):
+        dimensions = dict(zip(DIMENSION_KEYS, values))
+        result[cell_id_for_dimensions(dimensions)] = dimensions
+    return result
 
 
 def evaluate_robustness_matrix(
@@ -58,6 +80,8 @@ def evaluate_robustness_matrix(
         cell = by_id[cell_id]
         status = cell.get("status")
         if status == "missing":
+            if cell_id in mandatory:
+                mandatory_failures.append(cell_id)
             continue
         if status != "scored":
             insufficient.append(cell_id)
@@ -86,7 +110,18 @@ def evaluate_robustness_matrix(
     explicitly_missing = sorted(
         [cell_id for cell_id, cell in by_id.items() if cell.get("status") == "missing"]
         + missing_mandatory)
-    total_planned = len(reported_ids | mandatory)
+    declared_planned = (set(planned_cell_registry(robustness_contract))
+                        if "required_split_boundary_policies" in robustness_contract
+                        else set(robustness_contract.get("planned_cell_ids", [])))
+    planned_ids = ((set(declared_planned) | mandatory) if declared_planned
+                   else (set(reported_ids) | mandatory))
+    unexpected = sorted(reported_ids - planned_ids) if declared_planned else []
+    if unexpected:
+        raise GateEvaluationError(f"unregistered robustness cells: {unexpected}")
+    omitted = sorted(planned_ids - reported_ids)
+    explicitly_missing = sorted(set(explicitly_missing) | set(omitted))
+    mandatory_failures.extend(sorted(mandatory & set(omitted)))
+    total_planned = len(planned_ids)
     evaluated = len(passed) + len(failed) + len(insufficient)
 
     # The denominator follows the preregistered missing-cell policy: cells the
