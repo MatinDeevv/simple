@@ -10,14 +10,20 @@ leverage, contract-notional, or market-making claim.
 The frozen primary population remains independent research entries. Secondary
 policy sensitivities are descriptive only: no policy is selected by score.
 For each fixed policy, the three-class conditional comparator is refit using
-only that policy's accepted training rows, then scored on accepted OOS rows.
+only that policy's accepted **frozen-training** rows, then scored on accepted
+OOS rows. Boundary-crossing targets (entered before the split but ending at or
+after it) are neither labels for fitting nor OOS scores. In the carry-state
+view they may affect chronological open-position state only; they never enter
+comparator class counts. `BootstrapSupportError` is reserved for a genuine
+declared resampling-support shortage; malformed probabilities and all other
+contract failures fail closed.
 `reset_at_oos_start` is the main comparability sensitivity; the separate
 `carry_chronological_state_into_oos` view reports episodes or open targets
 crossing the split. Sparse secondary views report an explicit insufficiency
 status rather than changing the frozen primary result.
 
-Publication writes staging bytes but records hashes under deterministic final
-logical paths. After atomic publication, every output is rehashed against the
+Publication uses generic `ArtifactBinding`: staging bytes are physically
+hashed while their deterministic final logical paths are recorded. After atomic publication, every output is rehashed against the
 manifest; failed verification removes the unverified run. Frame contracts are
 checked vectorially with strict serialization reserved for representative rows.
 Duplicate source indices are rejected for bootstrap evaluation: one physical

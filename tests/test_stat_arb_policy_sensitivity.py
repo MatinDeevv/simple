@@ -27,3 +27,17 @@ def test_policy_order_and_boundary_contracts_are_explicit() -> None:
         assert view["boundary_contract"] == "reset_at_oos_start"
         assert set(view["boundary_contracts"]) == {"reset_at_oos_start", "carry_chronological_state_into_oos"}
         assert view["conditional_comparator_identity"] == "three_class_conditional_climatology"
+        assert view["frozen_training_rows"] == result.summary["evaluation"]["train_samples"]
+        assert view["oos_rows"] == result.summary["evaluation"]["oos_samples"]
+        assert view["frozen_training_rows"] + view["boundary_crossing_rows"] + view["oos_rows"] == int(result.emissions["basket_class"].notna().sum())
+
+
+def test_policy_only_relabels_bootstrap_support_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    times, prices = stat_arb.synthetic_input(900)
+
+    def malformed(*_args, **_kwargs):
+        raise stat_arb.ContractError("malformed probabilities")
+
+    monkeypatch.setattr(stat_arb, "observed_minute_block_multiclass_bootstrap_comparison", malformed)
+    with pytest.raises(stat_arb.ContractError, match="malformed probabilities"):
+        stat_arb.run_arrays(times, prices, 500, stat_arb._fast_config())

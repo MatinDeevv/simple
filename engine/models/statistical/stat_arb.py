@@ -31,7 +31,7 @@ import pandas as pd
 
 from engine.core.contracts import (ContractError as SharedContractError, canonical_pair_order,
                        contiguous_60s, validate_generated_manifest)
-from engine.core.run_manifest import build_run_manifest, canonical_json, verify_manifest_integrity, write_manifest
+from engine.core.run_manifest import ArtifactBinding, build_run_manifest, verify_manifest_integrity, write_manifest
 from engine.core.schema_validate import validate_instance
 from engine.evaluation.entry_diagnostics import (
     ENTRY_POLICIES,
@@ -66,6 +66,10 @@ RELATIVE_VALUE_MODE = "relative_value"
 
 class ContractError(RuntimeError):
     """Raised when a causal-research contract is violated."""
+
+
+class BootstrapSupportError(ContractError):
+    """Raised only when a declared bootstrap cannot draw sufficient support."""
 
 
 @dataclass(frozen=True)
@@ -478,7 +482,7 @@ def observed_minute_block_resample_indices(source_indices: np.ndarray, source_se
     while remaining > 0:
         attempts += 1
         if attempts > max_attempts:
-            raise ContractError("time-block bootstrap could not draw enough eligible entries")
+            raise BootstrapSupportError("time-block bootstrap could not draw enough eligible entries")
         segment, start, end = segment_ranges[int(rng.choice(len(segment_ranges), p=probabilities))]
         block_start = int(rng.integers(start, end))
         block_end = min(block_start + block_minutes, end)
@@ -1151,28 +1155,35 @@ def _evaluate_three_class_comparator_view(name: str, train: pd.DataFrame, oos: p
     return view, baseline, tiers
 
 
-def _entry_policy_sensitivity_views(labelled: pd.DataFrame, oos_index: pd.Index,
-                                    times: np.ndarray, timeline_segment_ids: np.ndarray,
-                                    config: ArenaConfig) -> dict[str, Any]:
+def _entry_policy_sensitivity_views(labelled: pd.DataFrame, frozen_train_index: pd.Index, oos_index: pd.Index,
+                                     times: np.ndarray, timeline_segment_ids: np.ndarray,
+                                     config: ArenaConfig) -> dict[str, Any]:
     """Policy-consistent comparators; no policy is selected by its score.
 
     ``reset_at_oos_start`` is the primary descriptive sensitivity: train and
     OOS policy state are independent. ``carry_chronological_state_into_oos``
     exposes the operational consequence of targets/episodes spanning the split.
     """
-    train = labelled.loc[~labelled.index.isin(oos_index)].copy()
+    # The complement of OOS is not training: entries whose targets cross the
+    # split have observed an OOS outcome and are label-ineligible for fitting.
+    train = labelled.loc[frozen_train_index].copy()
     oos = labelled.loc[oos_index].copy()
+    boundary = labelled.loc[~labelled.index.isin(frozen_train_index) & ~labelled.index.isin(oos_index)].copy()
 
     def score(policy: str, annotated_train: pd.DataFrame, annotated_oos: pd.DataFrame,
-              boundary: str) -> dict[str, Any]:
+              boundary_contract: str, accepted_boundary_state_rows: int = 0) -> dict[str, Any]:
         accepted_train = annotated_train.loc[annotated_train["accepted"]].copy()
         accepted_oos = annotated_oos.loc[annotated_oos["accepted"]].copy()
         result: dict[str, Any] = {
-            "boundary_contract": boundary,
+            "boundary_contract": boundary_contract,
+            "frozen_training_rows": int(len(train)),
+            "boundary_crossing_rows": int(len(boundary)),
+            "oos_rows": int(len(oos)),
             "train_row_count_before_policy": int(len(annotated_train)),
             "train_accepted_count": int(len(accepted_train)),
             "oos_row_count_before_policy": int(len(annotated_oos)),
             "oos_accepted_count": int(len(accepted_oos)),
+            "accepted_boundary_state_rows": int(accepted_boundary_state_rows),
             "train_unique_signal_episodes": int(accepted_train.loc[accepted_train["entry_episode_id"] >= 0, "entry_episode_id"].nunique()),
             "oos_unique_signal_episodes": int(accepted_oos.loc[accepted_oos["entry_episode_id"] >= 0, "entry_episode_id"].nunique()),
             "train_unique_target_clusters": int(accepted_train["target_cluster_id"].nunique()),
@@ -1201,7 +1212,7 @@ def _entry_policy_sensitivity_views(labelled: pd.DataFrame, oos_index: pd.Index,
                 accepted_oos["segment_id"].to_numpy(dtype=np.int64), times, timeline_segment_ids, minutes,
                 config.bootstrap_samples, config.bootstrap_seed + 20_000 + ENTRY_POLICY_SENSITIVITY_ORDER.index(policy) * 100 + minutes)
                 for minutes in config.bootstrap_block_sensitivity_minutes}
-        except ContractError as exc:
+        except BootstrapSupportError as exc:
             result.update(status="insufficient_bootstrap_support", insufficiency_reason=str(exc))
             return result
         result["status"] = "scored"
@@ -1212,8 +1223,9 @@ def _entry_policy_sensitivity_views(labelled: pd.DataFrame, oos_index: pd.Index,
         reset = score(policy, annotate_entry_diagnostics(train, policy=policy),
                       annotate_entry_diagnostics(oos, policy=policy), "reset_at_oos_start")
         chronological = annotate_entry_diagnostics(labelled, policy=policy)
+        accepted_boundary_state_rows = int(chronological.loc[boundary.index, "accepted"].sum())
         carry = score(policy, chronological.loc[train.index], chronological.loc[oos.index],
-                      "carry_chronological_state_into_oos")
+                      "carry_chronological_state_into_oos", accepted_boundary_state_rows)
         views[policy] = {**reset, "boundary_contracts": {"reset_at_oos_start": reset,
                                                             "carry_chronological_state_into_oos": carry}}
     return views
@@ -1506,7 +1518,7 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
     )
     tier_counts = pd.Series(conditional_tiers, dtype="string").value_counts().to_dict()
     policy_sensitivities = _entry_policy_sensitivity_views(
-        labelled, oos.index, times, timeline_segment_ids, config)
+        labelled, train.index, oos.index, times, timeline_segment_ids, config)
     emissions = annotate_entry_diagnostics(emissions)
     summary: dict[str, Any] = {
         "version": VERSION,
@@ -1717,14 +1729,6 @@ def _daily_artifact(emissions: pd.DataFrame) -> pd.DataFrame:
                  diagnostic_turnover_l1=("turnover_l1_diagnostic", "sum")))
 
 
-def _final_output_hashes(staging_dir: Path, final_dir: Path, paths: dict[str, str]) -> dict[str, str]:
-    """Hash staged bytes while binding the manifest to deterministic final paths."""
-    return {
-        f"{final_dir.parent.name}/{final_dir.name}/{relative}": sha256_file(staging_dir / relative)
-        for name, relative in paths.items() if name != "manifest"
-    }
-
-
 def _rehash_published_outputs(final_dir: Path, expected: dict[str, str]) -> None:
     for logical_path, expected_hash in expected.items():
         path = final_dir.parent.parent / Path(logical_path)
@@ -1796,14 +1800,15 @@ def write_result(result: ArenaResult, out_dir: Path, label: str,
 
         manifest = build_run_manifest(
             root=ROOT, frozen_contract_version=VERSION, required_tests_passed=False,
-            holdout_status="burned_acknowledged", source_files=[Path(__file__)],
-            input_artifacts=[CANONICAL_DIR / f"{pair}.parquet" for pair in PAIRS],
-            output_artifacts=[emissions_path, graph_path, daily_path, summary_path],
+            holdout_status="burned_acknowledged",
+            source_files=[ArtifactBinding(Path(__file__).resolve(), "engine/models/statistical/stat_arb.py")],
+            input_artifacts=[ArtifactBinding(CANONICAL_DIR / f"{pair}.parquet", f"data/canonical/{pair}.parquet")
+                             for pair in PAIRS],
+            output_artifacts=[ArtifactBinding(staging_dir / relative,
+                                              f"stat_arb_v0_2_1_runs/{run_id}/{relative}")
+                              for relative in (paths["minute"], paths["graph"], paths["daily"], paths["summary"])],
             configuration={"label": label, "version": VERSION, "run_id": run_id}, run_id=run_id,
         )
-        manifest["output_artifact_sha256"] = _final_output_hashes(staging_dir, final_dir, paths)
-        manifest_body = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
-        manifest["manifest_sha256"] = hashlib.sha256(canonical_json(manifest_body).encode("utf-8")).hexdigest()
         manifest_schema = json.loads((ROOT / "engine" / "config" / "schemas" /
                                       "research-run-manifest.schema.json").read_text(encoding="utf-8"))
         if not verify_manifest_integrity(manifest):

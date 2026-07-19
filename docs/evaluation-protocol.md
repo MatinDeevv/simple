@@ -9,9 +9,12 @@ an observation at `source_index` with horizon `h` occupies
 ## Policy-sensitive populations
 
 Independent entries remain the frozen primary population. Every secondary
-policy refits its comparator from policy-accepted training rows and evaluates
-only policy-accepted OOS rows. Results expose both reset-at-OOS and
-chronological carry-state contracts; neither is selected by performance.
+policy refits its comparator from policy-accepted frozen-training rows and
+evaluates only policy-accepted OOS rows. Boundary-crossing labels are excluded
+from both populations. Results expose both reset-at-OOS and chronological
+carry-state contracts; carry state may observe a boundary row's chronology but
+never its label for comparator fitting. Neither policy is selected by
+performance.
 Neutral outcomes remain in the primary three-class target, and these helpers
 make no execution or profitability claim.
 
