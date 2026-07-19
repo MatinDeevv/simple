@@ -1,0 +1,39 @@
+name: Feature request
+ description: Propose an enhancement to Azar.
+ title: "[feature] "
+ labels: ["enhancement", "triage"]
+ body:
+   - type: markdown
+     attributes:
+       value: |
+         Please describe how your idea fits Azar's causality-first research mission.
+   - type: textarea
+     id: problem
+     attributes:
+       label: Problem or gap
+       description: What research question or workflow is underserved?
+     validations:
+       required: true
+   - type: textarea
+     id: proposal
+     attributes:
+       label: Proposal
+       description: Concrete description of the enhancement.
+     validations:
+       required: true
+   - type: textarea
+     id: impact
+     attributes:
+       label: Research impact
+       description: Which pipeline (classical dynamics, coupling, evaluation, quantum archive) is affected?
+     validations:
+       required: true
+   - type: checkboxes
+     id: terms
+     attributes:
+       label: Confirmations
+       options:
+         - label: I have searched existing issues.
+           required: true
+         - label: This does not introduce look-ahead or data leakage.
+           required: true

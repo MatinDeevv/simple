@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/Aphelion-Research/Azar/discussions
+    about: Please use Discussions for open-ended questions.
+  - name: Security issue
+    url: https://github.com/Aphelion-Research/Azar/security/advisories/new
+    about: Report a security vulnerability privately.

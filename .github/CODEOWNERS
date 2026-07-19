@@ -1,0 +1,19 @@
+# Global owners
+* @MatinDeevv
+
+# Research contracts and state schema
+/docs/state-schema.md @MatinDeevv
+/engine/config/ @MatinDeevv
+/engine/core/ @MatinDeevv
+
+# Classical dynamics and integrator
+/engine/models/classical/ @MatinDeevv
+/engine/models/statistical/ @MatinDeevv
+
+# Quantum archive (frozen)
+/engine/quantum/ @MatinDeevv
+/docs/quantum-*.md @MatinDeevv
+
+# CI and repository verification
+/.github/workflows/ @MatinDeevv
+/engine/tools/ @MatinDeevv

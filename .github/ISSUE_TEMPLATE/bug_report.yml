@@ -1,0 +1,61 @@
+name: Bug report
+ description: Report a reproducible defect in Azar.
+ title: "[bug] "
+ labels: ["bug", "triage"]
+ body:
+   - type: markdown
+     attributes:
+       value: |
+         Thanks for reporting. Azar is a research simulator; please include a minimal reproducible example.
+   - type: textarea
+     id: summary
+     attributes:
+       label: Summary
+       description: One-paragraph description of the defect.
+     validations:
+       required: true
+   - type: textarea
+     id: reproduction
+     attributes:
+       label: Reproduction steps
+       description: Commands or script that demonstrate the issue.
+       placeholder: |
+         1. python -m venv .venv
+         2. pip install -r requirements-core.txt
+         3. python -m engine.models.classical.simulate_integrator --self-check
+     validations:
+       required: true
+   - type: textarea
+     id: expected
+     attributes:
+       label: Expected behavior
+     validations:
+       required: true
+   - type: textarea
+     id: actual
+     attributes:
+       label: Actual behavior
+       description: Paste error messages or output.
+     validations:
+       required: true
+   - type: textarea
+     id: environment
+     attributes:
+       label: Environment
+       description: OS, Python version, and dependency versions.
+       placeholder: |
+         - OS: Windows 11
+         - Python: 3.11.9
+         - numpy: 2.4.x
+         - pandas: 3.0.x
+     validations:
+       required: false
+   - type: checkboxes
+     id: terms
+     attributes:
+       label: Confirmations
+       options:
+         - label: I have searched existing issues.
+           required: true
+         - label: I am reporting a defect, not asking for trading advice.
+           required: true
