@@ -1,0 +1,4 @@
+interface:
+  display_name: "Live Market Data Provenance"
+  short_description: "Live-data source and timestamp checks."
+  default_prompt: "Use live-market-data-provenance for this data task."

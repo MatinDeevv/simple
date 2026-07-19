@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Research Rigor"
+  short_description: "Causal, reproducible quantitative research."
+  default_prompt: "Use quant-research-rigor for this research task."

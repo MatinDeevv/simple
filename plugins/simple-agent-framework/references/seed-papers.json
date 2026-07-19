@@ -1,0 +1,7 @@
+[
+ {"topic":"foreign exchange event timing","doi":"10.1257/000282803321455151","title":"Micro Effects of Macro Announcements: Real-Time Price Discovery in Foreign Exchange","use":"Event-time causality and announcement surprise design.","boundary":"Not an execution or profitability proof."},
+ {"topic":"statistical arbitrage market frictions","doi":"10.1111/joes.12153","title":"Statistical Arbitrage Pairs Trading Strategies: Review and Outlook","use":"Pairs-trading friction and implementation-risk review.","boundary":"Other asset classes and assumptions need separate validation."},
+ {"topic":"causal time series","url":"https://arxiv.org/abs/2102.05829","title":"Causal Inference for Time series Analysis: Problems, Methods and Evaluation","use":"Methods/evaluation survey for time-series causal work.","boundary":"Survey, not direct FX evidence."},
+ {"topic":"financial concept drift","url":"https://arxiv.org/abs/2103.14079","title":"Domain Specific Concept Drift Detectors for Predicting Financial Time Series","use":"Nonstationarity and drift-detection design input.","boundary":"Do not infer deployable returns."},
+ {"topic":"causal finance forecasting","url":"https://arxiv.org/abs/2408.09960","title":"Causality-Inspired Models for Financial Time Series Forecasting","use":"Causal-discovery comparison framing.","boundary":"External result; reproduce with sealed local protocol first."}
+]

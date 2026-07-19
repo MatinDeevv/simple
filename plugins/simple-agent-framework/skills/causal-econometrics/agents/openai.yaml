@@ -1,0 +1,4 @@
+interface:
+  display_name: "Causal Econometrics"
+  short_description: "Time-causal econometric research checks."
+  default_prompt: "Use causal-econometrics for this task."

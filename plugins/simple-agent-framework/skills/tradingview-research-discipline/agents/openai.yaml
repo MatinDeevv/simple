@@ -1,0 +1,4 @@
+interface:
+  display_name: "TradingView Research Discipline"
+  short_description: "Chart-source and feed-boundary checks."
+  default_prompt: "Use tradingview-research-discipline for this task."

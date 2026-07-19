@@ -1,0 +1,4 @@
+interface:
+  display_name: "Market Microstructure Rigor"
+  short_description: "Execution and market-friction research checks."
+  default_prompt: "Use market-microstructure-rigor for this task."

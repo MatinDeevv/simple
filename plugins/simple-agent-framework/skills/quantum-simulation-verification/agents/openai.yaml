@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quantum Simulation Verification"
+  short_description: "Physics and numerical verification gates."
+  default_prompt: "Use quantum-simulation-verification for this task."

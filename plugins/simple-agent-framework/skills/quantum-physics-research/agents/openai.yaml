@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quantum Physics Research"
+  short_description: "Quantum physics research with strict boundaries."
+  default_prompt: "Use quantum-physics-research for this task."
