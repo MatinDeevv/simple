@@ -44,6 +44,14 @@ def test_successful_publication_is_one_complete_directory_and_returned_summary_m
     assert run_dir.is_dir()
     manifest = json.loads(Path(paths["manifest"]).read_text(encoding="utf-8"))
     assert all(".staging-" not in key for key in manifest["output_artifact_sha256"])
+    assert set(manifest["source_file_sha256"]) == {"engine/models/statistical/stat_arb.py"}
+    assert set(manifest["input_artifact_sha256"]) == {f"data/canonical/{pair}.parquet" for pair in stat_arb.PAIRS}
+    assert set(manifest["output_artifact_sha256"]) == {
+        "stat_arb_v0_2_1_runs/00000000-0000-4000-8000-000000000001/minute.parquet",
+        "stat_arb_v0_2_1_runs/00000000-0000-4000-8000-000000000001/graph.parquet",
+        "stat_arb_v0_2_1_runs/00000000-0000-4000-8000-000000000001/daily.parquet",
+        "stat_arb_v0_2_1_runs/00000000-0000-4000-8000-000000000001/summary.json",
+    }
     for logical_path, digest in manifest["output_artifact_sha256"].items():
         published = run_dir.parent.parent / logical_path
         assert published.is_file()
