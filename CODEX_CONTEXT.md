@@ -55,10 +55,9 @@ Project plugin: `plugins/simple-agent-framework`.
 - Quant protocol gate and density-matrix checks.
 - Dukascopy URL construction/metadata probe, TradingView chart-link construction, feed-contract checks.
 
-External launchers configured in plugin `.mcp.json`:
-
-- Perplexity: requires `PERPLEXITY_API_KEY` only in process environment.
-- Firecrawl: requires `FIRECRAWL_API_KEY` only in process environment.
+Perplexity and Firecrawl are intentionally not enabled until valid environment-only
+keys exist. Add them only through `codex mcp add` after setting
+`PERPLEXITY_API_KEY` or `FIRECRAWL_API_KEY`; never add secrets to files.
 
 Never place secrets in source, config, receipts, commits, or chat. External tools are research-only; no broker/order functionality exists.
 

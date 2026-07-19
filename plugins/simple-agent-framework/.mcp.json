@@ -1,1 +1,1 @@
-{"mcpServers":{"simple-research":{"command":"python","args":["${pluginRoot}/mcp/research_mcp.py"],"env":{"SIMPLE_RESEARCH_TIMEOUT_SECONDS":"15"}},"perplexity":{"command":"npx","args":["-y","@perplexity-ai/mcp-server"]},"firecrawl":{"command":"npx","args":["-y","firecrawl-mcp"]}}}
+{"mcpServers":{"simple-research":{"command":"C:\\Python311\\python.exe","args":["C:\\Users\\marti\\Desktop\\simple\\plugins\\simple-agent-framework\\mcp\\research_mcp.py"],"env":{"SIMPLE_RESEARCH_TIMEOUT_SECONDS":"15"}}}}
