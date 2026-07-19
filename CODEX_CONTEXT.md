@@ -22,7 +22,7 @@
 - `agent1/policy-sensitivity-and-publication-hardening`: policy-population/stat-arb publication hardening.
 - `agent2/package-ci-and-provenance-hardening`: package metadata, wheel smoke, schema/manifest/provenance, CI hardening.
 - `agent2/package-ci-reliability`: merged; overlapping implementation was superseded by newer package/provenance tree.
-- `agent1/stat-evaluation-integrity` and `agent3/edge-tribunal`: already contained by main.
+- Edge Tribunal is not implemented: there is no `engine.experiments` subsystem or merged Edge Tribunal branch. Do not claim otherwise; repair integration contracts before proposing it.
 - `agent2/research-reliability-hardening`: already recorded in ancestry; do not revive its obsolete alternate layout.
 
 ## Agent framework
@@ -69,7 +69,7 @@ Never place secrets in source, config, receipts, commits, or chat. External tool
 - Required package resources: instrument/legal/frozen-archive JSON and schemas.
 - Core runtime excludes Qiskit/Qiskit Aer/matplotlib. Quantum dependencies remain isolated.
 - Formal repository audit uses `python -m engine.tools.verify_repository --tree head`.
-- `--tree index` is for staged-index verification. Both ignore unstaged/untracked files by contract.
+- `--tree index` is for staged-index verification. Both export and read only the selected tree, ignoring unstaged/untracked files by contract.
 
 ## Manifest contract
 

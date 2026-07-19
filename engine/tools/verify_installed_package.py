@@ -1,32 +1,42 @@
-"""Build and smoke-test a wheel from an unrelated working directory."""
+"""Build one fresh wheel and prove its installed console entry point works."""
 from __future__ import annotations
 import hashlib, json, os, subprocess, sys, tempfile, venv, zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-REQUIRED = {"engine/config/instruments.json", "engine/config/legal-event-schema.json", "engine/config/frozen-archives.json"}
 FORBIDDEN = ("data/", "artifacts/", ".git/", ".venv", "__pycache__", ".pytest_cache", "dist/", "tests/")
 
+def _run(command: list[str], cwd: Path, env: dict[str, str]) -> dict[str, object]:
+    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, env=env)
+    return {"command": command, "exit_code": result.returncode, "sha256": hashlib.sha256((result.stdout + result.stderr).encode()).hexdigest(), "stdout": result.stdout, "stderr": result.stderr}
+
 def main() -> int:
-    dist = ROOT / "dist"; dist.mkdir(exist_ok=True)
-    build = subprocess.run([sys.executable,"-m","build","--wheel","--outdir",str(dist)],cwd=ROOT,capture_output=True,text=True)
-    if build.returncode: print(build.stdout + build.stderr, file=sys.stderr); return build.returncode
-    wheel = max(dist.glob("*.whl"), key=lambda p:p.stat().st_mtime)
-    with zipfile.ZipFile(wheel) as z:
-        names=set(z.namelist()); missing=REQUIRED-names; forbidden=[n for n in names if n.startswith(FORBIDDEN)]
-    if missing or forbidden: print(json.dumps({"missing":sorted(missing),"forbidden":forbidden}),file=sys.stderr); return 1
-    with tempfile.TemporaryDirectory(prefix="auractl_isolated_") as tmp:
-        base=Path(tmp); env=base/"venv"; work=base/"outside"; work.mkdir(); venv.EnvBuilder(with_pip=True).create(env)
-        py=env/("Scripts/python.exe" if os.name=="nt" else "bin/python")
-        install=subprocess.run([str(py),"-m","pip","install",str(wheel)],capture_output=True,text=True)
-        if install.returncode: print(install.stdout+install.stderr,file=sys.stderr); return install.returncode
-        commands=([str(py),"-c","import engine; print(engine.__file__)"],[str(py),"-m","engine.cli.main","--help"],[str(py),"-m","engine.cli.main","stat-arb","--self-check"],[str(py),"-m","engine.cli.main","integrator","--self-check"],[str(py),"-m","engine.cli.main","legal-event","--self-check"])
-        receipts=[]
-        for command in commands:
-            result=subprocess.run(command,cwd=work,capture_output=True,text=True,env={k:v for k,v in os.environ.items() if k!="PYTHONPATH"})
-            receipts.append({"command":command,"exit_code":result.returncode,"sha256":hashlib.sha256((result.stdout+result.stderr).encode()).hexdigest()})
-            if result.returncode: print(result.stdout+result.stderr,file=sys.stderr); return result.returncode
-        print(json.dumps({"wheel":wheel.name,"wheel_sha256":hashlib.sha256(wheel.read_bytes()).hexdigest(),"python":subprocess.check_output([str(py),"--version"],text=True).strip(),"receipts":receipts},sort_keys=True))
+    required = {str(path.relative_to(ROOT)).replace("\\", "/") for folder in (ROOT / "engine" / "config", ROOT / "engine" / "config" / "schemas") for path in folder.rglob("*.json")}
+    with tempfile.TemporaryDirectory(prefix="auractl_build_") as tmp:
+        build_dir = Path(tmp) / "wheel"; build_dir.mkdir()
+        build = subprocess.run([sys.executable, "-m", "build", "--wheel", "--outdir", str(build_dir)], cwd=ROOT, capture_output=True, text=True)
+        wheels = list(build_dir.glob("*.whl"))
+        if build.returncode or len(wheels) != 1:
+            print(build.stdout + build.stderr, file=sys.stderr); return build.returncode or 1
+        wheel = wheels[0]; digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        with zipfile.ZipFile(wheel) as archive:
+            names = set(archive.namelist()); missing = required - names; forbidden = [name for name in names if name.startswith(FORBIDDEN)]
+        if missing or forbidden:
+            print(json.dumps({"missing": sorted(missing), "forbidden": forbidden}), file=sys.stderr); return 1
+        base = Path(tmp) / "isolated"; env_dir = base / "venv"; outside = base / "outside"; outside.mkdir(parents=True); venv.EnvBuilder(with_pip=True).create(env_dir)
+        python = env_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        auractl = env_dir / ("Scripts/auractl.exe" if os.name == "nt" else "bin/auractl")
+        install = subprocess.run([str(python), "-m", "pip", "install", str(wheel)], capture_output=True, text=True)
+        if install.returncode or not auractl.is_file(): print(install.stdout + install.stderr, file=sys.stderr); return install.returncode or 1
+        environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+        commands = [[str(python), "-c", "import engine, pathlib, sys; assert pathlib.Path(engine.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve())"], [str(auractl), "--help"], [str(auractl), "stat-arb", "--self-check"], [str(auractl), "integrator", "--self-check"], [str(auractl), "legal-event", "--self-check"], [str(auractl), "unknown-command"]]
+        receipts = [_run(command, outside, environment) for command in commands]
+        if any(item["exit_code"] != (2 if item["command"][-1] == "unknown-command" else 0) for item in receipts):
+            print(json.dumps(receipts, sort_keys=True), file=sys.stderr); return 1
+        pip = _run([str(python), "-m", "pip", "list", "--format=json"], outside, environment)
+        if pip["exit_code"]: return 1
+        dist = ROOT / "dist"; dist.mkdir(exist_ok=True); final = dist / wheel.name; final.write_bytes(wheel.read_bytes())
+        print(json.dumps({"wheel": wheel.name, "wheel_sha256": digest, "python": sys.version.split()[0], "resources": sorted(required), "pip_list": json.loads(str(pip["stdout"])), "receipts": [{key:value for key,value in item.items() if key not in {"stdout","stderr"}} for item in receipts]}, sort_keys=True))
     return 0
 
 if __name__ == "__main__": raise SystemExit(main())
