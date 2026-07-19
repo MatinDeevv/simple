@@ -14,7 +14,7 @@ Only the latest commit on the `main` branch receives security fixes.
 Please do **not** open a public issue for security problems.
 
 Instead, use GitHub's private vulnerability reporting:
-[https://github.com/Aphelion-Research/Azar/security/advisories/new](https://github.com/Aphelion-Research/Azar/security/advisories/new)
+[https://github.com/MatinDeevv/simple/security/advisories/new](https://github.com/MatinDeevv/simple/security/advisories/new)
 
 We aim to acknowledge reports within 5 business days and will coordinate disclosure timelines with the reporter.
 

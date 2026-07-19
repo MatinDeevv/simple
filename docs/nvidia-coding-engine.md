@@ -7,21 +7,23 @@ only in an isolated Git worktree.
 
 ## Safety contract
 
-- `NVIDIA_API_KEY` comes from the process environment or the ignored root `.env`.
+- `NVIDIA_API_KEY` comes only from the process environment.
 - The key is never included in prompts, output, receipts, source, or Git history.
 - The primary checkout and dirty worktrees are rejected.
 - The caller chooses context files and test command argument arrays explicitly.
-- Model output can modify files only through a size-limited unified diff checked
-  by `git apply --check`.
+- Model output is restricted to caller-declared paths and a size-limited unified
+  diff checked by `git apply --check`. Binary, link, submodule, rename, copy and
+  implicit mode-change patches are refused.
 - Test failures get at most two model repair attempts.
-- A clean test run, `git diff --check`, and reviewer approval are required.
+- A clean test run and `git diff --check` are required. Same-model review is
+  advisory only and never represented as independent review.
 - The engine leaves an approved diff for human review; it never commits or pushes.
 
 ## Configuration
 
 ```text
 NVIDIA_API_KEY      required secret
-NVIDIA_BASE_URL     default: https://integrate.api.nvidia.com/v1
+endpoint            pinned: https://integrate.api.nvidia.com/v1
 NVIDIA_MODELS       comma-separated preference order
 ```
 
@@ -38,7 +40,8 @@ Create a clean task worktree with `new-task-worktree.ps1`, then invoke:
   -Task 'Add a bounded feature and tests' `
   -Worktree 'C:\path\to\task-worktree' `
   -Context @('AGENTS.md', 'relevant/module.py', 'tests/test_relevant.py') `
-  -Test @('["python","-m","pytest","tests/test_relevant.py","-q"]')
+  -Test @('["python","-m","pytest","tests/test_relevant.py","-q"]') `
+  -AllowPath @('relevant/module.py', 'tests/test_relevant.py')
 ```
 
 Inspect the resulting diff, test receipts, and reviewer output before committing.

@@ -1,6 +1,7 @@
 """Build one fresh wheel and prove its installed console entry point works."""
 from __future__ import annotations
 import hashlib, json, os, subprocess, sys, tempfile, venv, zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -11,6 +12,7 @@ def _run(command: list[str], cwd: Path, env: dict[str, str]) -> dict[str, object
     return {"command": command, "exit_code": result.returncode, "sha256": hashlib.sha256((result.stdout + result.stderr).encode()).hexdigest(), "stdout": result.stdout, "stderr": result.stderr}
 
 def main() -> int:
+    started = datetime.now(timezone.utc).isoformat()
     required = {str(path.relative_to(ROOT)).replace("\\", "/") for folder in (ROOT / "engine" / "config", ROOT / "engine" / "config" / "schemas") for path in folder.rglob("*.json")}
     with tempfile.TemporaryDirectory(prefix="auractl_build_") as tmp:
         build_dir = Path(tmp) / "wheel"; build_dir.mkdir()
@@ -36,7 +38,20 @@ def main() -> int:
         pip = _run([str(python), "-m", "pip", "list", "--format=json"], outside, environment)
         if pip["exit_code"]: return 1
         dist = ROOT / "dist"; dist.mkdir(exist_ok=True); final = dist / wheel.name; final.write_bytes(wheel.read_bytes())
-        print(json.dumps({"wheel": wheel.name, "wheel_sha256": digest, "python": sys.version.split()[0], "resources": sorted(required), "pip_list": json.loads(str(pip["stdout"])), "receipts": [{key:value for key,value in item.items() if key not in {"stdout","stderr"}} for item in receipts]}, sort_keys=True))
+        member_hash = hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()
+        pip_snapshot = json.loads(str(pip["stdout"]))
+        payload = {
+            "receipt_version": "simple-installed-wheel-receipt-v1", "wheel": wheel.name,
+            "wheel_sha256": digest, "wheel_member_list_sha256": member_hash,
+            "build_command": [sys.executable, "-m", "build", "--wheel"],
+            "build_python_version": sys.version.split()[0], "started_at_utc": started,
+            "completed_at_utc": datetime.now(timezone.utc).isoformat(), "resources": sorted(required),
+            "forbidden_members": sorted(forbidden), "venv_path": str(env_dir),
+            "auractl_path": str(auractl), "pip_snapshot_sha256": hashlib.sha256(json.dumps(pip_snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+            "receipts": [{key:value for key,value in item.items() if key not in {"stdout","stderr"}} for item in receipts],
+        }
+        payload["receipt_sha256"] = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        print(json.dumps(payload, sort_keys=True, allow_nan=False))
     return 0
 
 if __name__ == "__main__": raise SystemExit(main())

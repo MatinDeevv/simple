@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 import json
 import hashlib
+import shutil, subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,3 +46,11 @@ def test_receipt_self_hash_contract() -> None:
     payload["receipt_sha256"] = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
     unsigned = {key: value for key, value in payload.items() if key != "receipt_sha256"}
     assert payload["receipt_sha256"] == hashlib.sha256(json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+def test_mcp_launches_from_copied_plugin_and_external_cwd(tmp_path) -> None:
+    copied=tmp_path/"copied-plugin"; shutil.copytree(ROOT/"plugins/simple-agent-framework",copied)
+    outside=tmp_path/"outside"; outside.mkdir()
+    request=json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}})+"\n"
+    proc=subprocess.run([sys.executable,str(copied/"mcp/research_mcp.py")],cwd=outside,input=request,text=True,capture_output=True,timeout=15)
+    assert proc.returncode==0,proc.stderr
+    assert json.loads(proc.stdout)["result"]["serverInfo"]["name"]=="simple-research"
