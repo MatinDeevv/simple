@@ -1,176 +1,117 @@
 # Causal FX Residual-Level Research Arena
 
-`engine/models/statistical/stat_arb.py` is a classical, causality-first research arena. It is
-not a strategy, backtest, OMS, execution model, market maker, or portfolio
-authorization system. The source is one-minute BID bars only; it has no ask,
-spread, fill, queue, borrow, impact, capacity, contract-notional, or conversion
-price data.
+`engine/models/statistical/stat_arb.py` is a causal forecast-evaluation
+arena, not an execution system. It uses one-minute BID closes only and makes
+no PnL, tradability, spread, commission, fill, latency, impact, capacity,
+leverage, contract-notional, or market-making claim.
 
-## Frozen v0.2 contract
+## Corrective frozen contract: v0.2.1
 
-Version `stat-arb-arena-0.2.0-frozen` is fixed before obtaining new data. It is
-synthetically tested only. Its normal data CLI is guarded because all current
-canonical observations end in the already inspected 2024 holdout.
+`stat-arb-arena-0.2.1-corrective-frozen` corrects evaluation semantics that
+were documented for v0.2.0 but not implemented. The correction was made before
+any new post-2024 data inspection and is not a signal, threshold, regime,
+horizon, factor-count, or profitability change.
 
-```powershell
-python engine\models\statistical\stat_arb.py --self-check
-```
+- v0.2.0's primary three-class gate compared the model only with a global
+  train prior, despite documentation specifying a conditional climatology.
+- v0.2.1 uses that documented train-only conditional three-class comparator.
+- Existing v0.1 archive paths and any possible v0.2.0 artifacts are never
+  overwritten. New publications use a distinct `stat_arb_v0_2_1_runs/<uuid>/`
+  directory.
 
-`--allow-burned-holdout-research` exists only for an explicit, non-promotable
-forensic run. It must not be used to select, tune, or report a v0.2 result.
-New post-2024 data and a predeclared chronological split are required before a
-v0.2 empirical evaluation.
+All currently available canonical observations include the already inspected
+2024 holdout. The data CLI therefore remains guarded. `--self-check` is the
+supported synthetic check; `--allow-burned-holdout-research` only permits a
+non-promotable forensic run and must never be used for tuning, selection, or
+advertising. Post-2024 untouched data and execution-quality inputs remain
+required before any empirical promotion decision.
 
-The old `stat_arb_*` artifacts are preserved as v0.1 archive files. A later
-authorized v0.2 run writes only `stat_arb_v0_2_*` files, so it cannot overwrite
-the archive.
+## Causal target and row-specific horizon
 
-## Correct basis and portfolio mapping
+The primary target is the entry-frozen standardized basket return with class
+order `neutral`, `positive`, `negative`; neutral outcomes remain in every
+primary score. The selected component, both-regime factor basis, residual
+scales, regime probabilities, diagnostic basket, stop, and each row's actual
+`holding_horizon_steps` are frozen at entry. A target is absent unless every
+arrival from entry through its individual horizon is an observed contiguous
+minute.
 
-Let `z = T r` be the identity-free return transform. A residual signal `s` is a
-dual vector, therefore its raw-return functional is:
+Each labelled row records its truthful inclusive target interval,
+`target_start_index` through `target_end_index`, and connected
+`target_cluster_id`. Training means the complete target ends before the split;
+a row crossing the split is excluded from frozen training. It is not silently
+given the maximum or average horizon.
 
-```text
-s' z = s' T r = (T' s)' r
-```
+## Primary comparator and uncertainty
 
-The basket signal is consequently `T.T @ s`, not `inverse(T) @ s`.
-Factor loading columns are primal directions; their raw map remains
-`inverse(T) @ B`. Tests assert the equality above for each EURGBP, EURJPY, and
-GBPJPY triangle-residual channel over randomized returns.
+The primary comparator is a three-class conditional climatology fitted only to
+the permitted training labels. It returns an `N x 3` probability matrix in
+`neutral`, `positive`, `negative` order. Its fixed sparse-cell hierarchy is:
 
-The basket constraints are also explicit. `D` is the pair-by-currency incidence
-matrix: base currency `+1`, quote currency `-1`. Diagnostic weights satisfy
-`D.T @ w = 0` plus a predeclared number of factor-direction constraints. This
-is currency-incidence neutrality in pair-coefficient units, not dollar-risk
-neutrality: contract notionals and conversion prices are absent, so risk-unit
-sizing and any executable neutrality claim remain blocked.
+1. absolute residual-level bin + selected component + UTC session bucket + active regime;
+2. absolute residual-level bin + selected component + active regime;
+3. absolute residual-level bin + active regime;
+4. global three-class train prior.
 
-## Causal target
+Every tier uses symmetric Dirichlet/Laplace smoothing with fixed `alpha=1.0`
+and a fixed minimum cell count of 20. Each OOS row persists the selected tier
+and its three comparator probabilities. The global train prior remains a
+separately reported simple comparator, but is no longer the sole primary gate.
 
-v0.1 selected the largest current return residual and labelled whether a later,
-re-estimated standardized return was smaller. That was an invalid convergence
-target: it was dominated by order statistics/regression to the mean and changed
-factor loadings, scales, and basis between entry and evaluation.
+The directional binary climatology remains a secondary diagnostic only. Its
+name explicitly states that neutral outcomes are excluded.
 
-v0.2 maintains two identity-free standardized residual levels, one for each
-regime definition:
+The primary gate compares model probabilities with the three-class conditional
+comparator using contiguous observed-minute block bootstrap sensitivity
+(`30`, `240`, and `1440` minutes by default). The predeclared decision bound is
+`lower_one_sided_95 = q0.05`. Fields are unambiguous:
 
-```text
-S_t^j = rho_j S_(t-1)^j + e_t^j / sigma_t^j
-S_t = P(z_t=low) S_t^low + P(z_t=high) S_t^high
-```
+- `lower_one_sided_95 = q0.05`, `upper_one_sided_95 = q0.95`;
+- `two_sided_95_lower = q0.025`, `two_sided_95_upper = q0.975`;
+- `lower_95_deprecated` and `upper_95_deprecated` are temporary aliases only.
 
-Each branch is updated only in its own mean/loading/scale definition; a regime
-switch cannot inject one model's innovation into the other level. The posterior
-is applied once, at the mixture stage; it is not also multiplied into a branch
-innovation. Emissions decompose each blended level change into branch-AR decay,
-full conditional innovation, and posterior reweighting. At each entry
-the selected component, both factor means/loadings/scales, regime probabilities,
-both level AR coefficients, basket, holding horizon, and stop are frozen.
-Future returns are reprojected through exactly those frozen definitions. The
-residual explanatory diagnostic is:
+## Segment, purge, and overlap sensitivities
 
-```text
-gross_convergence = -sign(S_t) * (S_(t+h,frozen) - S_t)
-```
+A causal segment transition is a hard boundary. Target clusters, purging,
+embargo, accepted-entry state, active-overlap counts, overlap minutes, and
+candidate/accepted turnover never cross it. The first candidate in a segment
+has candidate turnover zero; the first accepted entry in a segment has
+accepted-entry turnover null.
 
-Residual convergence requires positive gross convergence and a smaller absolute
-frozen level. It remains explanatory. The **primary predictive target** is the
-frozen basket return standardized at entry:
+The frozen chronological view, purged view, and purged-plus-embargoed view
+score the same OOS population and the unchanged model probabilities. Each
+refits the real three-class conditional comparator on only its allowed train
+labels, then reports train/OOS counts, fallback-tier counts, Brier and log-loss
+scores, model-minus-baseline improvements, and observed-minute uncertainty.
 
-```text
-y = sum_h(w' r) / (sigma_basket,entry * sqrt(h))
-```
+The named primary population remains `independent_research_entries` for
+compatibility. The summary reports every view in this fixed order, without
+choosing the best result: independent entries, first entry per signal episode,
+non-overlapping global, component, basket, and one representative per target
+cluster. Each view exposes eligible/accepted counts, unique episode and target
+cluster counts, class counts, scores, and either uncertainty or an explicit
+insufficient-sample status.
 
-The fixed neutral zone is `|y| <= 0.25`. Primary evaluation is three-class
-(`negative`, `neutral`, `positive`) with multiclass log loss and Brier score;
-neutral observations are never removed from the primary score. This is still a
-no-cost diagnostic return, not PnL or an executable performance claim.
+## Transactional artifacts and validation
 
-Every entry records projection distortion, fraction of the original signal
-preserved, correlation between basket returns and selected residual returns,
-basket/residual-label disagreement, basket directional hit, cumulative gross
-log return, and basket maximum adverse excursion. Emissions also retain
-residual MAE, time-to-zero, displacement removed, breakdown, frozen-path
-volatility, and turnover. A target is absent when even one arrival from entry
-through horizon is not an observed contiguous minute.
+Each publication creates a UUID and writes only to a sibling staging directory.
+It validates serialized emission rows, graph rows, daily rows, the complete
+summary, and the existing research-run manifest before one directory move
+publishes the run. The summary already contains final relative artifact paths
+and source hashes before it is validated and written. JSON is serialized with
+`allow_nan=False`; NaN/infinity are rejected at the summary boundary, while
+nullable emission fields are explicitly serialized as JSON `null`.
 
-## Basket-space modes and post-construction gate
+The published directory contains exactly `minute.parquet`, `graph.parquet`,
+`daily.parquet`, `summary.json`, and `manifest.json`. Failed staging is removed;
+an existing final UUID directory is refused rather than overwritten. Returned,
+persisted, and printed summaries are the same JSON structure. The manifest has
+`required_tests_passed=false` for a normal run unless real repository-defined
+evidence is supplied, and the burned-holdout blocker remains in force.
 
-`cycle_neutral` is the frozen default: it enforces `D.T @ w = 0` in
-pair-coefficient space and therefore admits only closed currency loops, along
-with the selected factor-neutrality constraints. `relative_value` is a separate
-diagnostic contract: it solves a constrained projected utility problem with
-selected-factor neutrality, L1 gross normalization, per-pair caps, and a
-`max(abs(D.T @ w))` currency-incidence budget. The budget changes composition,
-rather than merely shrinking the same vector.
-It does not claim dollar or risk neutrality because contract notionals and FX
-conversion prices are not available.
-
-Selection is provisional until the actual basket is constructed. Probability
-and entry gating consume the post-projection signal-preservation fraction,
-projection distortion, geometric signal alignment, and concentration. Gross
-exposure is only a nonzero eligibility check. The hard preservation gate is fixed at `0.35`; an erased or
-over-concentrated projection cannot enter merely because its pre-projection
-residual was large.
-
-## Actual regime and graph effects
-
-This is regime switching, not merely regime-aware scoring. A causal two-state
-posterior maintains distinct low/high covariance, factor loading, residual
-variance, and residual-AR state. The active state also changes factor refresh
-cadence, level persistence, entry threshold, holding horizon, stop multiple,
-number of neutralized factors, and diagnostic position scale.
-
-The sparse partial-correlation graph is not decorative. Its incident pressure
-and connected-cluster size penalize residual selection, enter breakdown risk,
-and reduce diagnostic position scale. The graph edge artifact records the
-active regime at each refresh.
-
-## Evaluation baselines and uncertainty
-
-All baselines are frozen from the train partition. The primary comparator is a
-conditional **basket-directional** climatology indexed by absolute
-residual-level bin, component, UTC session bucket, and regime, with
-predeclared sparse-cell fallbacks. A deterministic time-shuffled-label placebo
-is reported separately.
-
-The statistical interval is an exact-entry-count bootstrap whose dependence
-blocks are actual contiguous observed one-minute ranges. A 1,440-minute block
-is therefore one observed trading day of raw bars, not 1,440 sparse eligible
-entries. Each sampled time block contributes the eligible entries inside it;
-the final replicate is truncated to the original entry count. It uses at least
-2,000 replicates by default, reports Brier, log-loss, and calibration-improvement
-intervals, and records 30-minute, 4-hour, and one-day sensitivities. The
-conditional-climatology gate requires positive one-day lower-95% Brier
-improvement; it still cannot promote anything without executable data and a
-new untouched holdout.
-
-IID-residual simulation, AR(1), static-vs-dynamic PCA, and no-regime ablations
-remain required matched comparators before any empirical model comparison. They
-are not claimed as executed v0.2 results.
-
-## Archived v0.1 evidence
-
-The 50,000-row v0.1 bounded diagnostic covered 48,653 synchronous rows from
-2024-11-12T07:30Z through 2024-12-31T21:59Z. It had 483 gap resets and failed:
-Brier `0.397654` versus frozen-prior `0.150843`, with lower-95% moving-block
-Brier improvement `-0.278320`.
-
-The v0.1 2024 outer fold processed 1,071,797 synchronous rows. Its
-2022-2023 history served both to warm causal state and to establish frozen
-training baseline-label estimates; 2024 was the scored outer partition. It
-also failed: Brier `0.462652` versus `0.150255`, lower-95% improvement
-`-0.337775`. These are archived rejection evidence, not a v0.2 baseline and
-not a license to tune on 2024.
-
-## Artifacts
-
-- `data/derived/stat_arb_*`: immutable v0.1 archive artifacts.
-- `data/derived/stat_arb_v0_2_*_minute.parquet`: causal v0.2 emissions,
-  frozen-target outcomes, weights, exposures, and diagnostics.
-- `data/derived/stat_arb_v0_2_*_graph.parquet`: active-regime graph edges.
-- `data/derived/stat_arb_v0_2_*_daily.parquet`: diagnostic aggregates only.
-- `data/derived/stat_arb_v0_2_*_summary.json`: target definition, data hashes,
-  baselines, bootstrap sensitivity, and non-promotion status.
+`stat-arb-summary.schema.json` requires the evaluation contract, comparator,
+purge/embargo views, entry-policy sensitivities, confidence convention,
+optimizer diagnostics, paths, hashes, and contract version.
+`stat-arb-emission.schema.json` validates integration-critical interval,
+segment, entry-policy, overlap, turnover, optimizer, and probability fields.
+The graph and daily files have dedicated row schemas.

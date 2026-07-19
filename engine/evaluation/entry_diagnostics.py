@@ -49,9 +49,11 @@ import pandas as pd
 
 ENTRY_POLICIES = (
     "independent_research_entries",
+    "first_entry_per_signal_episode",
     "non_overlapping_global",
     "non_overlapping_component",
     "non_overlapping_basket",
+    "one_representative_per_target_cluster",
 )
 FROZEN_DEFAULT_ENTRY_POLICY = "independent_research_entries"
 
@@ -142,13 +144,44 @@ def compute_accepted_mask(frame: pd.DataFrame, policy: str) -> np.ndarray:
     if policy == "independent_research_entries":
         return eligible.copy()
     source_index = frame["source_index"].to_numpy(dtype=np.int64)
+    segment_id = frame["segment_id"].to_numpy(dtype=np.int64)
+    if policy == "first_entry_per_signal_episode":
+        episodes = assign_signal_episodes(
+            source_index, segment_id,
+            frame["selected_component_index"].to_numpy(), eligible,
+        )
+        accepted = np.zeros(len(frame), dtype=bool)
+        seen: set[int] = set()
+        for position in np.argsort(source_index, kind="stable"):
+            episode = int(episodes[position])
+            if episode >= 0 and episode not in seen:
+                accepted[position] = True
+                seen.add(episode)
+        return accepted
+    if policy == "one_representative_per_target_cluster":
+        if "target_cluster_id" not in frame.columns:
+            raise EntryDiagnosticsError("one_representative_per_target_cluster requires target_cluster_id")
+        clusters = frame["target_cluster_id"].to_numpy()
+        accepted = np.zeros(len(frame), dtype=bool)
+        seen_clusters: set[tuple[int, int]] = set()
+        for position in np.argsort(source_index, kind="stable"):
+            if not eligible[position] or pd.isna(clusters[position]):
+                continue
+            key = (int(segment_id[position]), int(clusters[position]))
+            if key not in seen_clusters:
+                accepted[position] = True
+                seen_clusters.add(key)
+        return accepted
     target_end_index = source_index + frame["holding_horizon_steps"].to_numpy(dtype=np.int64)
+    group_key = np.empty(len(frame), dtype=object)
     if policy == "non_overlapping_global":
-        group_key = np.zeros(len(frame), dtype=np.int64)
+        group_key[:] = [(int(segment), "global") for segment in segment_id]
     elif policy == "non_overlapping_component":
-        group_key = frame["selected_component_index"].to_numpy()
+        group_key[:] = [(int(segment), int(component)) for segment, component in zip(
+            segment_id, frame["selected_component_index"].to_numpy(), strict=True)]
     else:  # non_overlapping_basket
-        group_key = _basket_signature(frame)
+        group_key[:] = [(int(segment), basket) for segment, basket in zip(
+            segment_id, _basket_signature(frame), strict=True)]
     accepted = np.zeros(len(frame), dtype=bool)
     if eligible.any():
         accepted[eligible] = _greedy_non_overlapping_accept(
@@ -187,7 +220,11 @@ def annotate_entry_diagnostics(frame: pd.DataFrame, policy: str = FROZEN_DEFAULT
     overlap_minutes = np.zeros(len(result), dtype=np.int64)
     order = np.argsort(source_index, kind="stable")
     open_entries: list[tuple[int, int, Any]] = []  # (end_index, component, basket_key)
+    active_segment: int | None = None
     for position in order:
+        if active_segment != int(segment_id[position]):
+            open_entries = []
+            active_segment = int(segment_id[position])
         if not eligible[position]:
             continue
         current = int(source_index[position])
@@ -209,13 +246,23 @@ def annotate_entry_diagnostics(frame: pd.DataFrame, policy: str = FROZEN_DEFAULT
     if weight_columns:
         weights = result[weight_columns].to_numpy(dtype=np.float64)
         candidate_change = np.zeros(len(result))
-        candidate_change[1:] = np.sum(np.abs(np.diff(weights, axis=0)), axis=1)
+        previous_weights: np.ndarray | None = None
+        previous_segment: int | None = None
+        for position in order:
+            if previous_segment == int(segment_id[position]) and previous_weights is not None:
+                candidate_change[position] = float(np.sum(np.abs(weights[position] - previous_weights)))
+            previous_weights = weights[position]
+            previous_segment = int(segment_id[position])
         result["candidate_weight_change_l1"] = candidate_change
 
         accepted = result["accepted"].to_numpy(dtype=bool)
         accepted_change = np.full(len(result), np.nan)
         last_accepted_weights: np.ndarray | None = None
+        accepted_segment: int | None = None
         for position in order:
+            if accepted_segment != int(segment_id[position]):
+                last_accepted_weights = None
+                accepted_segment = int(segment_id[position])
             if not accepted[position]:
                 continue
             if last_accepted_weights is not None:
@@ -236,6 +283,7 @@ class EntryPolicySummary:
     pct_entries_overlapping_another_target: float
     first_entry_count: int
     repeated_entry_count: int
+    accepted_entry_count: int
 
 
 def summarize_entry_policy(frame: pd.DataFrame, policy: str = FROZEN_DEFAULT_ENTRY_POLICY,
@@ -260,4 +308,5 @@ def summarize_entry_policy(frame: pd.DataFrame, policy: str = FROZEN_DEFAULT_ENT
         pct_entries_overlapping_another_target=pct_overlapping,
         first_entry_count=first_count,
         repeated_entry_count=repeated_count,
+        accepted_entry_count=int(eligible_view["accepted"].sum()),
     )

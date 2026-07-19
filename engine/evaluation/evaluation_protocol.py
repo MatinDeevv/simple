@@ -26,7 +26,34 @@ class EvaluationProtocolError(RuntimeError):
     """Raised when interval/cluster inputs violate this module's contract."""
 
 
-def target_interval(source_index: np.ndarray | int, horizon_steps: int) -> tuple[np.ndarray, np.ndarray]:
+def _validated_horizons(source_index: np.ndarray | int,
+                        horizon_steps: int | np.ndarray) -> np.ndarray:
+    """Return integer horizons after enforcing the public interval contract."""
+    source = np.asarray(source_index)
+    horizons = np.asarray(horizon_steps)
+    if horizons.ndim > 1:
+        raise EvaluationProtocolError("horizon_steps must be a scalar or one-dimensional array")
+    if horizons.ndim == 1 and horizons.size != source.size:
+        raise EvaluationProtocolError("vector horizon_steps must match source_index length")
+    if horizons.dtype.kind == "b" or (
+            horizons.dtype.kind == "O" and any(isinstance(value, (bool, np.bool_))
+                                                for value in horizons.reshape(-1))):
+        raise EvaluationProtocolError("horizon_steps must not contain booleans")
+    try:
+        numeric = np.asarray(horizons, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise EvaluationProtocolError("horizon_steps must be numeric") from exc
+    if not np.isfinite(numeric).all() or not np.equal(numeric, np.floor(numeric)).all():
+        raise EvaluationProtocolError("horizon_steps must be finite integer-valued values")
+    if (numeric < 0).any():
+        raise EvaluationProtocolError("horizon_steps must be non-negative")
+    if horizons.ndim == 0:
+        return np.full(source.shape, int(numeric), dtype=np.int64)
+    return numeric.astype(np.int64)
+
+
+def target_interval(source_index: np.ndarray | int,
+                    horizon_steps: int | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Return ``(target_start_index, target_end_index)`` for each source index.
 
     The interval is inclusive on both ends: a row observed at ``source_index``
@@ -34,10 +61,8 @@ def target_interval(source_index: np.ndarray | int, horizon_steps: int) -> tuple
     is considered to "occupy" every index in between (its state depends on
     the whole path, not just the endpoint).
     """
-    if horizon_steps < 0:
-        raise EvaluationProtocolError("horizon_steps must be non-negative")
     start = np.asarray(source_index, dtype=np.int64)
-    end = start + int(horizon_steps)
+    end = start + _validated_horizons(start, horizon_steps)
     return start, end
 
 
@@ -90,7 +115,9 @@ def apply_embargo(held_out_start: np.ndarray, held_out_end: np.ndarray,
 
 
 def purge_overlapping_training_rows(train_start: np.ndarray, train_end: np.ndarray,
-                                    held_out_start: np.ndarray, held_out_end: np.ndarray) -> np.ndarray:
+                                    held_out_start: np.ndarray, held_out_end: np.ndarray,
+                                    train_segment_id: np.ndarray | None = None,
+                                    held_out_segment_id: np.ndarray | None = None) -> np.ndarray:
     """Boolean mask, True where a training row's outcome window overlaps any held-out window.
 
     Callers should exclude ``True`` rows from training. Held-out intervals
@@ -100,15 +127,31 @@ def purge_overlapping_training_rows(train_start: np.ndarray, train_end: np.ndarr
     """
     train_start = np.asarray(train_start, dtype=np.int64)
     train_end = np.asarray(train_end, dtype=np.int64)
-    merged_start, merged_end = _merge_intervals(np.asarray(held_out_start, dtype=np.int64),
-                                                np.asarray(held_out_end, dtype=np.int64))
+    held_out_start = np.asarray(held_out_start, dtype=np.int64)
+    held_out_end = np.asarray(held_out_end, dtype=np.int64)
+    if len(train_start) != len(train_end) or len(held_out_start) != len(held_out_end):
+        raise EvaluationProtocolError("interval start/end arrays must have matching lengths")
+    if (train_segment_id is None) != (held_out_segment_id is None):
+        raise EvaluationProtocolError("train and held-out segment IDs must be supplied together")
+    if train_segment_id is None:
+        train_segment = np.zeros(len(train_start), dtype=np.int64)
+        held_out_segment = np.zeros(len(held_out_start), dtype=np.int64)
+    else:
+        train_segment = np.asarray(train_segment_id, dtype=np.int64)
+        held_out_segment = np.asarray(held_out_segment_id, dtype=np.int64)
+        if len(train_segment) != len(train_start) or len(held_out_segment) != len(held_out_start):
+            raise EvaluationProtocolError("segment IDs must match their interval arrays")
     purge = np.zeros(len(train_start), dtype=bool)
-    for start, end in zip(merged_start, merged_end):
-        purge |= (train_start <= end) & (start <= train_end)
+    for segment in np.unique(held_out_segment):
+        held_mask = held_out_segment == segment
+        merged_start, merged_end = _merge_intervals(held_out_start[held_mask], held_out_end[held_mask])
+        train_mask = train_segment == segment
+        for start, end in zip(merged_start, merged_end):
+            purge |= train_mask & (train_start <= end) & (start <= train_end)
     return purge
 
 
-def assign_target_clusters(source_index: np.ndarray, horizon_steps: int,
+def assign_target_clusters(source_index: np.ndarray, horizon_steps: int | np.ndarray,
                            segment_id: np.ndarray) -> np.ndarray:
     """Connected-component cluster id per row: rows whose outcome windows
     chain together via overlap (within the same causal segment) share a
@@ -145,8 +188,9 @@ class PurgeSummary:
     remaining_train_rows: int
 
 
-def build_evaluation_metadata(source_index: np.ndarray, horizon_steps: int, segment_id: np.ndarray,
-                              is_training: np.ndarray, embargo_steps: int = 0) -> tuple[pd.DataFrame, PurgeSummary]:
+def build_evaluation_metadata(source_index: np.ndarray, horizon_steps: int | np.ndarray, segment_id: np.ndarray,
+                              is_training: np.ndarray, embargo_steps: int = 0,
+                              is_evaluation: np.ndarray | None = None) -> tuple[pd.DataFrame, PurgeSummary]:
     """Attach purge/embargo/cluster metadata to an existing chronological split.
 
     ``is_training`` marks the frozen chronological training partition exactly
@@ -162,20 +206,31 @@ def build_evaluation_metadata(source_index: np.ndarray, horizon_steps: int, segm
     is_training = np.asarray(is_training, dtype=bool)
     if not (len(source_index) == len(segment_id) == len(is_training)):
         raise EvaluationProtocolError("source_index, segment_id, and is_training must be the same length")
+    if is_evaluation is None:
+        is_evaluation = ~is_training
+    else:
+        is_evaluation = np.asarray(is_evaluation, dtype=bool)
+        if len(is_evaluation) != len(source_index):
+            raise EvaluationProtocolError("is_evaluation must match source_index length")
+        if np.any(is_training & is_evaluation):
+            raise EvaluationProtocolError("a row cannot be both training and evaluation")
     starts, ends = target_interval(source_index, horizon_steps)
     cluster_ids = assign_target_clusters(source_index, horizon_steps, segment_id)
 
-    held_out_start = starts[~is_training]
-    held_out_end = ends[~is_training]
+    held_out_start = starts[is_evaluation]
+    held_out_end = ends[is_evaluation]
+    held_out_segment = segment_id[is_evaluation]
     purged = np.zeros(len(source_index), dtype=bool)
     embargoed = np.zeros(len(source_index), dtype=bool)
-    if is_training.any() and (~is_training).any():
+    if is_training.any() and is_evaluation.any():
         purged[is_training] = purge_overlapping_training_rows(
-            starts[is_training], ends[is_training], held_out_start, held_out_end)
+            starts[is_training], ends[is_training], held_out_start, held_out_end,
+            segment_id[is_training], held_out_segment)
         if embargo_steps > 0:
             wide_start, wide_end = apply_embargo(held_out_start, held_out_end, embargo_steps)
             embargoed[is_training] = purge_overlapping_training_rows(
-                starts[is_training], ends[is_training], wide_start, wide_end)
+                starts[is_training], ends[is_training], wide_start, wide_end,
+                segment_id[is_training], held_out_segment)
         else:
             embargoed[is_training] = purged[is_training]
 

@@ -110,7 +110,12 @@ def test_candidate_change_tracks_every_minute_while_accepted_change_only_tracks_
     assert annotated["accepted_entry_weight_change_l1"].iloc[1:].isna().all()
 
 
-@pytest.mark.parametrize("policy", ed.ENTRY_POLICIES)
+@pytest.mark.parametrize("policy", (
+    "independent_research_entries",
+    "non_overlapping_global",
+    "non_overlapping_component",
+    "non_overlapping_basket",
+))
 def test_accepted_rows_under_non_overlapping_policies_never_overlap_each_other(policy: str) -> None:
     rng = np.random.default_rng(5)
     n = 60
@@ -162,3 +167,37 @@ def test_reuses_evaluation_protocol_interval_semantics_for_overlap_checks() -> N
     # sanity: entry_diagnostics' notion of "overlap" agrees with evaluation_protocol's
     starts, ends = ep.target_interval(np.array([0, 1]), 5)
     assert ep.intervals_overlap(starts[0], ends[0], starts[1], ends[1])
+
+
+def test_segment_transition_resets_acceptance_active_overlap_and_turnover() -> None:
+    # The second row would be blocked by row zero without the causal-gap reset.
+    frame = _frame([10, 11, 0], [1, 1, 0], [0, 0, 0], [True, True, True], [30, 30, 30],
+                   weights_a=[3.0, 4.0, 1.0], weights_b=[0.0, 0.0, 0.0])
+    annotated = ed.annotate_entry_diagnostics(frame, policy="non_overlapping_global")
+    # Source order is row 2 (segment 0), then rows 0/1 (segment 1); both first rows are accepted.
+    np.testing.assert_array_equal(annotated["accepted"], [True, False, True])
+    np.testing.assert_array_equal(annotated["active_target_count"], [0, 1, 0])
+    np.testing.assert_allclose(annotated["candidate_weight_change_l1"], [0.0, 1.0, 0.0])
+    assert np.isnan(annotated.loc[0, "accepted_entry_weight_change_l1"])
+    assert np.isnan(annotated.loc[2, "accepted_entry_weight_change_l1"])
+    assert annotated.loc[1, "overlap_minutes"] == 29
+
+
+def test_episode_first_and_cluster_representative_are_explicit_sensitivities() -> None:
+    frame = _frame([0, 1, 2, 3, 20], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0],
+                   [True, True, True, True, True], 10)
+    frame["target_cluster_id"] = [0, 0, 0, 0, 1]
+    independent = ed.compute_accepted_mask(frame, "independent_research_entries")
+    episode_first = ed.compute_accepted_mask(frame, "first_entry_per_signal_episode")
+    cluster_first = ed.compute_accepted_mask(frame, "one_representative_per_target_cluster")
+    assert independent.sum() == 5
+    assert episode_first.sum() == 2
+    assert cluster_first.sum() == 2
+
+
+def test_first_entry_after_gap_has_null_accepted_turnover_and_zero_candidate_turnover() -> None:
+    frame = _frame([0, 1, 2], [0, 1, 1], [0, 0, 0], [True, True, True], 30,
+                   weights_a=[1.0, 9.0, 10.0], weights_b=[0.0, 0.0, 0.0])
+    annotated = ed.annotate_entry_diagnostics(frame, policy="non_overlapping_global")
+    assert annotated.loc[1, "candidate_weight_change_l1"] == 0.0
+    assert np.isnan(annotated.loc[1, "accepted_entry_weight_change_l1"])

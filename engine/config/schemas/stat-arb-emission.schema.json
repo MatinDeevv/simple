@@ -1,31 +1,28 @@
 {
-  "schema_version": "fxsim-stat-arb-emission-v1",
-  "title": "stat_arb.py per-minute emission row (engine/stat_arb.py:run_arrays)",
-  "note": "stat_arb.py is under active development (OQ-14); this schema intentionally requires only the structurally stable identity/eligibility/probability columns, not every diagnostic or outcome column, per docs/repository-verification.md.",
+  "schema_version": "fxsim-stat-arb-emission-v2",
+  "title": "stat-arb v0.2.1 per-minute emission row",
   "type": "object",
   "required": [
-    "source_index", "timestamp", "segment_id", "selected_component_index",
-    "selected_component", "entry_eligible", "holding_horizon_steps",
-    "high_volatility_regime_probability", "breakdown_probability",
-    "p_basket_directional", "p_basket_neutral", "p_basket_positive", "p_basket_negative"
+    "source_index", "timestamp", "segment_id", "selected_component_index", "selected_component",
+    "entry_eligible", "holding_horizon_steps", "target_start_index", "target_end_index", "target_cluster_id",
+    "entry_policy", "accepted", "active_target_count", "same_component_active_count", "same_basket_active_count",
+    "overlaps_existing_target", "overlap_minutes", "candidate_weight_change_l1", "accepted_entry_weight_change_l1",
+    "optimizer_converged", "optimizer_iterations", "p_basket_directional", "p_basket_neutral",
+    "p_basket_positive", "p_basket_negative", "p_primary_conditional_neutral",
+    "p_primary_conditional_positive", "p_primary_conditional_negative"
   ],
   "properties": {
-    "source_index": {"type": "integer"},
-    "timestamp": {"type": "string"},
-    "segment_id": {"type": "integer"},
-    "selected_component_index": {"type": "integer"},
-    "selected_component": {"type": "string"},
-    "entry_eligible": {"type": "boolean"},
-    "holding_horizon_steps": {"type": "integer"},
-    "high_volatility_regime_probability": {"type": "number"},
-    "breakdown_probability": {"type": "number"},
-    "p_basket_directional": {"type": "number"},
-    "p_basket_neutral": {"type": "number"},
-    "p_basket_positive": {"type": "number"},
-    "p_basket_negative": {"type": "number"},
-    "basket_outcome_class": {"type": ["number", "null"]},
-    "basket_binary_label": {"type": ["number", "null"]},
-    "target_time": {"type": ["string", "null"]}
+    "source_index": {"type": "integer"}, "timestamp": {"type": "string"}, "segment_id": {"type": "integer"},
+    "selected_component_index": {"type": "integer"}, "selected_component": {"type": "string"},
+    "entry_eligible": {"type": "boolean"}, "holding_horizon_steps": {"type": "integer"},
+    "target_start_index": {"type": ["integer", "null"]}, "target_end_index": {"type": ["integer", "null"]}, "target_cluster_id": {"type": ["integer", "null"]},
+    "entry_policy": {"type": "string"}, "accepted": {"type": "boolean"},
+    "active_target_count": {"type": "integer"}, "same_component_active_count": {"type": "integer"}, "same_basket_active_count": {"type": "integer"},
+    "overlaps_existing_target": {"type": "boolean"}, "overlap_minutes": {"type": "integer"},
+    "candidate_weight_change_l1": {"type": ["number", "null"]}, "accepted_entry_weight_change_l1": {"type": ["number", "null"]},
+    "optimizer_converged": {"type": "boolean"}, "optimizer_iterations": {"type": "integer"},
+    "p_basket_directional": {"type": "number"}, "p_basket_neutral": {"type": "number"}, "p_basket_positive": {"type": "number"}, "p_basket_negative": {"type": "number"},
+    "p_primary_conditional_neutral": {"type": ["number", "null"]}, "p_primary_conditional_positive": {"type": ["number", "null"]}, "p_primary_conditional_negative": {"type": ["number", "null"]}
   },
   "additionalProperties": true
 }

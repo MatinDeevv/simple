@@ -18,7 +18,10 @@ import argparse
 import hashlib
 import json
 import math
+import os
+import shutil
 import sys
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,9 +31,13 @@ import pandas as pd
 
 from engine.core.contracts import (ContractError as SharedContractError, canonical_pair_order,
                        contiguous_60s, validate_generated_manifest)
-from engine.core.run_manifest import build_run_manifest, write_manifest
+from engine.core.run_manifest import build_run_manifest, verify_manifest_integrity, write_manifest
 from engine.core.schema_validate import validate_instance
-from engine.evaluation.entry_diagnostics import annotate_entry_diagnostics, summarize_entry_policy
+from engine.evaluation.entry_diagnostics import (
+    ENTRY_POLICIES,
+    annotate_entry_diagnostics,
+    summarize_entry_policy,
+)
 from engine.evaluation.evaluation_protocol import build_evaluation_metadata
 
 
@@ -40,7 +47,18 @@ DERIVED_DIR = ROOT / "data" / "derived"
 PAIRS = canonical_pair_order(ROOT)
 N_PAIRS = len(PAIRS)
 DT_NS = 60_000_000_000
-VERSION = "stat-arb-arena-0.2.0-frozen"
+VERSION = "stat-arb-arena-0.2.1-corrective-frozen"
+PRIMARY_CLIMATOLOGY_ALPHA = 1.0
+PRIMARY_CLIMATOLOGY_MINIMUM_CELL_COUNT = 20
+PRIMARY_CLASS_ORDER = ("neutral", "positive", "negative")
+ENTRY_POLICY_SENSITIVITY_ORDER = (
+    "independent_research_entries",
+    "first_entry_per_signal_episode",
+    "non_overlapping_global",
+    "non_overlapping_component",
+    "non_overlapping_basket",
+    "one_representative_per_target_cluster",
+)
 OUTER_TEST_YEARS = (2022, 2023, 2024)
 CYCLE_NEUTRAL_MODE = "cycle_neutral"
 RELATIVE_VALUE_MODE = "relative_value"
@@ -486,7 +504,7 @@ def observed_minute_block_bootstrap_comparison(model_probability: np.ndarray, ba
     outcome = np.asarray(labels, dtype=np.float64)
     if (len(model) < 2 or len(model) != len(baseline) or len(model) != len(outcome)
             or len(model) != len(source_indices) or len(model) != len(source_segment_ids)):
-        return {name: {"point": float("nan"), "lower_95": float("nan"), "upper_95": float("nan")}
+        return {name: _insufficient_confidence_bounds()
                 for name in ("brier_improvement", "log_loss_improvement", "calibration_improvement")}
     if samples < 1:
         raise ContractError("bootstrap samples must be positive")
@@ -508,11 +526,7 @@ def observed_minute_block_bootstrap_comparison(model_probability: np.ndarray, ba
         )
     result: dict[str, dict[str, float]] = {}
     for column, name in enumerate(("brier_improvement", "log_loss_improvement", "calibration_improvement")):
-        result[name] = {
-            "point": float(point[column]),
-            "lower_95": float(np.quantile(estimates[:, column], 0.05)),
-            "upper_95": float(np.quantile(estimates[:, column], 0.95)),
-        }
+        result[name] = _confidence_bounds(float(point[column]), estimates[:, column])
     return result
 
 
@@ -527,7 +541,7 @@ def observed_minute_block_multiclass_bootstrap_comparison(model_probabilities: n
     baseline = np.asarray(baseline_probabilities, dtype=np.float64)
     outcome = np.asarray(labels, dtype=np.int8)
     if model.ndim != 2 or model.shape[1] != 3 or model.shape != baseline.shape or len(model) < 2 or len(model) != len(outcome):
-        return {name: {"point": float("nan"), "lower_95": float("nan"), "upper_95": float("nan")}
+        return {name: _insufficient_confidence_bounds()
                 for name in ("brier_improvement", "log_loss_improvement")}
     point = np.array([multiclass_brier_score(baseline, outcome) - multiclass_brier_score(model, outcome),
                       multiclass_log_loss(baseline, outcome) - multiclass_log_loss(model, outcome)])
@@ -538,9 +552,36 @@ def observed_minute_block_multiclass_bootstrap_comparison(model_probabilities: n
                                                           timeline_segment_ids, block_minutes, rng)
         estimates[draw] = (multiclass_brier_score(baseline[indices], outcome[indices]) - multiclass_brier_score(model[indices], outcome[indices]),
                            multiclass_log_loss(baseline[indices], outcome[indices]) - multiclass_log_loss(model[indices], outcome[indices]))
-    return {name: {"point": float(point[column]), "lower_95": float(np.quantile(estimates[:, column], 0.05)),
-                   "upper_95": float(np.quantile(estimates[:, column], 0.95))}
+    return {name: _confidence_bounds(float(point[column]), estimates[:, column])
             for column, name in enumerate(("brier_improvement", "log_loss_improvement"))}
+
+
+def _confidence_bounds(point: float, estimates: np.ndarray) -> dict[str, float]:
+    """Return named one- and two-sided bootstrap quantiles without ambiguity."""
+    values = np.asarray(estimates, dtype=np.float64)
+    return {
+        "point": float(point),
+        "lower_one_sided_95": float(np.quantile(values, 0.05)),
+        "upper_one_sided_95": float(np.quantile(values, 0.95)),
+        "two_sided_95_lower": float(np.quantile(values, 0.025)),
+        "two_sided_95_upper": float(np.quantile(values, 0.975)),
+        "lower_95_deprecated": float(np.quantile(values, 0.05)),
+        "upper_95_deprecated": float(np.quantile(values, 0.95)),
+    }
+
+
+def _insufficient_confidence_bounds() -> dict[str, Any]:
+    """Explicitly report insufficiency instead of producing fake intervals."""
+    return {
+        "status": "insufficient_sample",
+        "point": None,
+        "lower_one_sided_95": None,
+        "upper_one_sided_95": None,
+        "two_sided_95_lower": None,
+        "two_sided_95_upper": None,
+        "lower_95_deprecated": None,
+        "upper_95_deprecated": None,
+    }
 
 
 class CausalFactorState:
@@ -926,9 +967,80 @@ def _level_bin(values: pd.Series) -> pd.Series:
                      index=values.index, dtype=np.int8)
 
 
-def frozen_conditional_climatology(train: pd.DataFrame, target: pd.DataFrame, label_column: str,
-                                   minimum_cell_count: int = 20) -> tuple[np.ndarray, list[str]]:
-    """Fit only on train labels; predict a conditional primary-label climatology."""
+def _conditional_climatology_columns() -> tuple[list[str], list[str], list[str]]:
+    return (
+        ["_level_bin", "selected_component_index", "session_bucket", "active_regime"],
+        ["_level_bin", "selected_component_index", "active_regime"],
+        ["_level_bin", "active_regime"],
+    )
+
+
+def frozen_three_class_conditional_climatology(
+        train: pd.DataFrame, target: pd.DataFrame, label_column: str = "basket_class",
+        minimum_cell_count: int = PRIMARY_CLIMATOLOGY_MINIMUM_CELL_COUNT,
+        alpha: float = PRIMARY_CLIMATOLOGY_ALPHA) -> tuple[np.ndarray, list[str]]:
+    """Fit the predeclared train-only three-class primary comparator.
+
+    Class order is ``neutral, positive, negative``.  Every selected cell uses
+    symmetric Dirichlet/Laplace smoothing with the fixed ``alpha``; fallbacks
+    are selected only from train counts and never inspect target labels.
+    """
+    if minimum_cell_count < 1 or not math.isfinite(alpha) or alpha <= 0.0:
+        raise ContractError("conditional climatology parameters must be positive and finite")
+    if train.empty:
+        raise ContractError("conditional climatology requires non-empty training rows")
+    if target.empty:
+        return np.empty((0, 3), dtype=np.float64), []
+    source = train.copy()
+    labels = source[label_column].to_numpy()
+    if not np.isin(labels, [0, 1, 2]).all():
+        raise ContractError("three-class climatology labels must be neutral=0, positive=1, negative=2")
+    source["_level_bin"] = _level_bin(source["entry_residual_level"])
+    destination = target.copy()
+    destination["_level_bin"] = _level_bin(destination["entry_residual_level"])
+
+    def table(columns: list[str]) -> dict[tuple[Any, ...], tuple[np.ndarray, int]]:
+        grouped = source.groupby(columns, dropna=False)[label_column]
+        result: dict[tuple[Any, ...], tuple[np.ndarray, int]] = {}
+        for key, values in grouped:
+            key_tuple = key if isinstance(key, tuple) else (key,)
+            counts = values.value_counts().reindex([0, 1, 2], fill_value=0).to_numpy(dtype=np.float64)
+            result[key_tuple] = (counts, int(counts.sum()))
+        return result
+
+    detailed_columns, component_columns, regime_columns = _conditional_climatology_columns()
+    detailed, component, regime = (table(detailed_columns), table(component_columns), table(regime_columns))
+    global_counts = source[label_column].value_counts().reindex([0, 1, 2], fill_value=0).to_numpy(dtype=np.float64)
+
+    predictions: list[np.ndarray] = []
+    tiers: list[str] = []
+    for _, row in destination.iterrows():
+        key_sets = (
+            (tuple(row[column] for column in detailed_columns), detailed, "level_component_session_regime"),
+            (tuple(row[column] for column in component_columns), component, "level_component_regime"),
+            (tuple(row[column] for column in regime_columns), regime, "level_regime"),
+        )
+        selected_counts = global_counts
+        selected_tier = "global_three_class_train_prior"
+        for key, values, tier in key_sets:
+            counts, count = values.get(key, (np.zeros(3, dtype=np.float64), 0))
+            if count >= minimum_cell_count:
+                selected_counts = counts
+                selected_tier = tier
+                break
+        predictions.append((selected_counts + alpha) / (float(selected_counts.sum()) + 3.0 * alpha))
+        tiers.append(selected_tier)
+    result = np.asarray(predictions, dtype=np.float64)
+    if not np.isfinite(result).all() or np.any(result < 0.0) or not np.allclose(result.sum(axis=1), 1.0):
+        raise ContractError("conditional climatology produced invalid probabilities")
+    return result, tiers
+
+
+def frozen_binary_directional_climatology(train: pd.DataFrame, target: pd.DataFrame,
+                                          label_column: str = "basket_binary_label",
+                                          minimum_cell_count: int = PRIMARY_CLIMATOLOGY_MINIMUM_CELL_COUNT,
+                                          alpha: float = PRIMARY_CLIMATOLOGY_ALPHA) -> tuple[np.ndarray, list[str]]:
+    """Secondary directional comparator; neutral outcomes must already be removed."""
     if train.empty or target.empty:
         return np.full(len(target), float("nan")), []
     source = train.copy()
@@ -936,30 +1048,136 @@ def frozen_conditional_climatology(train: pd.DataFrame, target: pd.DataFrame, la
     destination = target.copy()
     destination["_level_bin"] = _level_bin(destination["entry_residual_level"])
 
-    def table(columns: list[str]) -> dict[tuple[Any, ...], tuple[int, int]]:
+    def table(columns: list[str]) -> dict[tuple[Any, ...], tuple[float, int]]:
         grouped = source.groupby(columns, dropna=False)[label_column].agg(["sum", "count"])
-        return {key if isinstance(key, tuple) else (key,): (int(row["sum"]), int(row["count"]))
+        return {key if isinstance(key, tuple) else (key,): (float(row["sum"]), int(row["count"]))
                 for key, row in grouped.iterrows()}
 
-    detailed_columns = ["_level_bin", "selected_component_index", "session_bucket", "active_regime"]
-    component_columns = ["_level_bin", "selected_component_index", "active_regime"]
-    regime_columns = ["_level_bin", "active_regime"]
+    detailed_columns, component_columns, regime_columns = _conditional_climatology_columns()
     detailed, component, regime = (table(detailed_columns), table(component_columns), table(regime_columns))
-    global_probability = float(source[label_column].mean())
+    global_wins = float(source[label_column].sum())
+    global_count = len(source)
     predictions: list[float] = []
     tiers: list[str] = []
     for _, row in destination.iterrows():
-        key_sets = (
-            (tuple(row[column] for column in detailed_columns), detailed, "component_session_regime"),
-            (tuple(row[column] for column in component_columns), component, "component_regime"),
+        selected_wins, selected_count, selected_tier = global_wins, global_count, "global_binary_train_prior"
+        for key, values, tier in (
+            (tuple(row[column] for column in detailed_columns), detailed, "level_component_session_regime"),
+            (tuple(row[column] for column in component_columns), component, "level_component_regime"),
             (tuple(row[column] for column in regime_columns), regime, "level_regime"),
-        )
-        selected = next(((wins / count, tier) for key, values, tier in key_sets
-                         for wins, count in [values.get(key, (0, 0))] if count >= minimum_cell_count),
-                        (global_probability, "global"))
-        predictions.append(float(selected[0]))
-        tiers.append(str(selected[1]))
+        ):
+            wins, count = values.get(key, (0.0, 0))
+            if count >= minimum_cell_count:
+                selected_wins, selected_count, selected_tier = wins, count, tier
+                break
+        predictions.append((selected_wins + alpha) / (selected_count + 2.0 * alpha))
+        tiers.append(selected_tier)
     return np.asarray(predictions, dtype=np.float64), tiers
+
+
+def _three_class_score_view(model_probabilities: np.ndarray, baseline_probabilities: np.ndarray,
+                            labels: np.ndarray) -> dict[str, float]:
+    model_brier = multiclass_brier_score(model_probabilities, labels)
+    baseline_brier = multiclass_brier_score(baseline_probabilities, labels)
+    model_loss = multiclass_log_loss(model_probabilities, labels)
+    baseline_loss = multiclass_log_loss(baseline_probabilities, labels)
+    return {
+        "model_brier_score": model_brier,
+        "conditional_baseline_brier_score": baseline_brier,
+        "model_minus_baseline_brier_improvement": baseline_brier - model_brier,
+        "model_log_loss": model_loss,
+        "conditional_baseline_log_loss": baseline_loss,
+        "model_minus_baseline_log_loss_improvement": baseline_loss - model_loss,
+    }
+
+
+def _evaluate_three_class_comparator_view(name: str, train: pd.DataFrame, oos: pd.DataFrame,
+                                          model_probabilities: np.ndarray, oos_class: np.ndarray,
+                                          times: np.ndarray, timeline_segment_ids: np.ndarray,
+                                          config: ArenaConfig) -> tuple[dict[str, Any], np.ndarray, list[str]]:
+    """Score an unchanged model against a comparator fitted to one allowed train view."""
+    baseline, tiers = frozen_three_class_conditional_climatology(train, oos)
+    bootstrap = {
+        f"{block_minutes}_observed_minutes": observed_minute_block_multiclass_bootstrap_comparison(
+            model_probabilities, baseline, oos_class,
+            oos["source_index"].to_numpy(dtype=np.int64),
+            oos["segment_id"].to_numpy(dtype=np.int64), times, timeline_segment_ids,
+            block_minutes, config.bootstrap_samples, config.bootstrap_seed + 10_000 + block_minutes,
+        )
+        for block_minutes in config.bootstrap_block_sensitivity_minutes
+    }
+    tier_counts = pd.Series(tiers, dtype="string").value_counts().sort_index().to_dict()
+    view: dict[str, Any] = {
+        "name": name,
+        "train_sample_count": int(len(train)),
+        "oos_sample_count": int(len(oos)),
+        "comparator": {
+            "identity": "three_class_conditional_climatology",
+            "class_order": list(PRIMARY_CLASS_ORDER),
+            "symmetric_dirichlet_alpha": PRIMARY_CLIMATOLOGY_ALPHA,
+            "minimum_cell_count": PRIMARY_CLIMATOLOGY_MINIMUM_CELL_COUNT,
+            "fallback_hierarchy": [
+                "level_bin_component_session_regime",
+                "level_bin_component_regime",
+                "level_bin_regime",
+                "global_three_class_train_prior",
+            ],
+            "tier_counts": {str(key): int(value) for key, value in tier_counts.items()},
+        },
+        "scores": _three_class_score_view(model_probabilities, baseline, oos_class),
+        "observed_minute_block_bootstrap": {
+            "samples": config.bootstrap_samples,
+            "block_unit": "actual contiguous observed one-minute bars",
+            "exact_replicate_entry_count": int(len(oos)),
+            "confidence_bound_convention": "q0.05/q0.95 are one-sided 95% bounds; q0.025/q0.975 are two-sided 95% bounds",
+            "sensitivity": bootstrap,
+        },
+    }
+    return view, baseline, tiers
+
+
+def _entry_policy_sensitivity_views(labelled: pd.DataFrame, oos_index: pd.Index,
+                                    times: np.ndarray, timeline_segment_ids: np.ndarray,
+                                    config: ArenaConfig) -> dict[str, Any]:
+    """Expose overlap dependence without selecting a policy by its score."""
+    views: dict[str, Any] = {}
+    for policy in ENTRY_POLICY_SENSITIVITY_ORDER:
+        annotated = annotate_entry_diagnostics(labelled, policy=policy)
+        view = annotated.loc[oos_index]
+        accepted = view["accepted"].to_numpy(dtype=bool)
+        accepted_rows = view.loc[accepted]
+        class_counts = (accepted_rows["basket_class"].value_counts()
+                        .reindex([0, 1, 2], fill_value=0).to_dict())
+        result: dict[str, Any] = {
+            "eligible_row_count": int(view["entry_eligible"].sum()),
+            "accepted_row_count": int(accepted.sum()),
+            "unique_episode_count": int(view.loc[accepted & (view["entry_episode_id"] >= 0),
+                                                  "entry_episode_id"].nunique()),
+            "unique_target_cluster_count": int(accepted_rows["target_cluster_id"].nunique()),
+            "class_counts": {PRIMARY_CLASS_ORDER[key]: int(value) for key, value in class_counts.items()},
+        }
+        if len(accepted_rows) < 2:
+            result["status"] = "insufficient_sample"
+            result["uncertainty"] = _insufficient_confidence_bounds()
+        else:
+            model = accepted_rows[["p_basket_neutral", "p_basket_positive", "p_basket_negative"]].to_numpy(dtype=np.float64)
+            baseline = accepted_rows[["p_primary_conditional_neutral", "p_primary_conditional_positive",
+                                     "p_primary_conditional_negative"]].to_numpy(dtype=np.float64)
+            labels = accepted_rows["basket_class"].to_numpy(dtype=np.int8)
+            result["status"] = "scored"
+            result["scores"] = _three_class_score_view(model, baseline, labels)
+            result["uncertainty"] = {
+                f"{block_minutes}_observed_minutes": observed_minute_block_multiclass_bootstrap_comparison(
+                    model, baseline, labels,
+                    accepted_rows["source_index"].to_numpy(dtype=np.int64),
+                    accepted_rows["segment_id"].to_numpy(dtype=np.int64), times, timeline_segment_ids,
+                    block_minutes, config.bootstrap_samples,
+                    config.bootstrap_seed + 20_000 + ENTRY_POLICY_SENSITIVITY_ORDER.index(policy) * 100 + block_minutes,
+                )
+                for block_minutes in config.bootstrap_block_sensitivity_minutes
+            }
+        views[policy] = result
+    return views
 
 
 def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
@@ -1158,39 +1376,59 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
         if outcome is not None:
             record.update(outcome)
     emissions = pd.DataFrame(records)
-    emissions = annotate_entry_diagnostics(emissions)
     labelled = emissions[emissions["basket_outcome_class"].notna()].copy()
     labelled["basket_class"] = labelled["basket_outcome_class"].map({0: 0, 1: 1, -1: 2}).astype(np.int8)
-    frozen_training = (labelled["source_index"] + labelled["holding_horizon_steps"] < test_start_index)
+    frozen_training = labelled["source_index"] + labelled["holding_horizon_steps"] < test_start_index
+    oos_population = labelled["source_index"] >= test_start_index
     evaluation_metadata, purge_summary = build_evaluation_metadata(
-        labelled["source_index"].to_numpy(dtype=np.int64), config.max_horizon_steps,
+        labelled["source_index"].to_numpy(dtype=np.int64),
+        labelled["holding_horizon_steps"].to_numpy(dtype=np.int64),
         labelled["segment_id"].to_numpy(dtype=np.int64), frozen_training.to_numpy(dtype=bool),
-        embargo_steps=config.max_horizon_steps,
+        embargo_steps=config.max_horizon_steps, is_evaluation=oos_population.to_numpy(dtype=bool),
     )
     for column in evaluation_metadata:
         emissions[column] = pd.NA
         emissions.loc[labelled.index, column] = evaluation_metadata[column].to_numpy()
-    train = labelled[labelled["source_index"] + labelled["holding_horizon_steps"] < test_start_index].copy()
-    oos = labelled[labelled["source_index"] >= test_start_index].copy()
+    emissions["basket_class"] = pd.NA
+    emissions.loc[labelled.index, "basket_class"] = labelled["basket_class"].to_numpy()
+    labelled = emissions.loc[labelled.index].copy()
+    labelled["basket_class"] = labelled["basket_class"].astype(np.int8)
+    train = labelled.loc[frozen_training.to_numpy()].copy()
+    oos = labelled.loc[oos_population.to_numpy()].copy()
     if len(train) < 100 or len(oos) < 100:
         raise ContractError("train/OOS target partitions require at least 100 valid frozen entries each")
-    class_prior = train["basket_class"].value_counts(normalize=True).reindex([0, 1, 2], fill_value=0.0).to_numpy(dtype=np.float64)
     model_probabilities = oos[["p_basket_neutral", "p_basket_positive", "p_basket_negative"]].to_numpy(dtype=np.float64)
     oos_class = oos["basket_class"].to_numpy(dtype=np.int8)
+    class_prior = train["basket_class"].value_counts(normalize=True).reindex([0, 1, 2], fill_value=0.0).to_numpy(dtype=np.float64)
     prior_probabilities = np.tile(class_prior, (len(oos), 1))
-    purged_train = labelled.loc[frozen_training & ~evaluation_metadata["embargoed"].to_numpy(dtype=bool)].copy()
-    if purged_train.empty:
-        raise ContractError("purged/embargoed sensitivity left no training entries")
-    purged_class_prior = (purged_train["basket_class"].value_counts(normalize=True)
-                          .reindex([0, 1, 2], fill_value=0.0).to_numpy(dtype=np.float64))
-    purged_prior_probabilities = np.tile(purged_class_prior, (len(oos), 1))
-    primary_bootstrap_sensitivity = {
-        f"{block_minutes}_observed_minutes": observed_minute_block_multiclass_bootstrap_comparison(
-            model_probabilities, prior_probabilities, oos_class, oos["source_index"].to_numpy(dtype=np.int64),
-            oos["segment_id"].to_numpy(dtype=np.int64), times, timeline_segment_ids, block_minutes,
-            config.bootstrap_samples, config.bootstrap_seed + 10_000 + block_minutes)
-        for block_minutes in config.bootstrap_block_sensitivity_minutes
-    }
+    purged_train = labelled.loc[frozen_training.to_numpy() & ~evaluation_metadata["purged_from_training"].to_numpy(dtype=bool)].copy()
+    embargoed_train = labelled.loc[frozen_training.to_numpy() & ~evaluation_metadata["embargoed"].to_numpy(dtype=bool)].copy()
+    if purged_train.empty or embargoed_train.empty:
+        raise ContractError("purged sensitivity left no training entries")
+    frozen_view, primary_baseline, primary_tiers = _evaluate_three_class_comparator_view(
+        "frozen_chronological_training", train, oos, model_probabilities, oos_class,
+        times, timeline_segment_ids, config,
+    )
+    purged_view, _purged_baseline, _purged_tiers = _evaluate_three_class_comparator_view(
+        "purged_training", purged_train, oos, model_probabilities, oos_class,
+        times, timeline_segment_ids, config,
+    )
+    embargoed_view, _embargoed_baseline, _embargoed_tiers = _evaluate_three_class_comparator_view(
+        "purged_plus_embargoed_training", embargoed_train, oos, model_probabilities, oos_class,
+        times, timeline_segment_ids, config,
+    )
+    emissions["p_primary_conditional_neutral"] = np.nan
+    emissions["p_primary_conditional_positive"] = np.nan
+    emissions["p_primary_conditional_negative"] = np.nan
+    emissions["primary_conditional_climatology_tier"] = pd.NA
+    emissions.loc[oos.index, "p_primary_conditional_neutral"] = primary_baseline[:, 0]
+    emissions.loc[oos.index, "p_primary_conditional_positive"] = primary_baseline[:, 1]
+    emissions.loc[oos.index, "p_primary_conditional_negative"] = primary_baseline[:, 2]
+    emissions.loc[oos.index, "primary_conditional_climatology_tier"] = primary_tiers
+    labelled = emissions.loc[labelled.index].copy()
+    labelled["basket_class"] = labelled["basket_class"].astype(np.int8)
+    oos = labelled.loc[oos.index].copy()
+    primary_bootstrap_sensitivity = frozen_view["observed_minute_block_bootstrap"]["sensitivity"]
     directional_train = train[train["basket_binary_label"].notna()].copy()
     directional_oos = oos[oos["basket_binary_label"].notna()].copy()
     if len(directional_train) < 100 or len(directional_oos) < 100:
@@ -1198,7 +1436,7 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
     directional_train["basket_binary_label"] = directional_train["basket_binary_label"].astype(np.int8)
     directional_oos["basket_binary_label"] = directional_oos["basket_binary_label"].astype(np.int8)
     frozen_train_prior = float(directional_train["basket_binary_label"].mean())
-    conditional_probability, conditional_tiers = frozen_conditional_climatology(
+    conditional_probability, conditional_tiers = frozen_binary_directional_climatology(
         directional_train, directional_oos, "basket_binary_label")
     oos_probability = directional_oos["p_basket_directional"].to_numpy(dtype=np.float64)
     oos_label = directional_oos["basket_binary_label"].to_numpy(dtype=np.float64)
@@ -1220,14 +1458,17 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
         f"{config.bootstrap_block_sensitivity_minutes[-1]}_observed_minutes"]
     shuffled_labels = oos_label[np.random.default_rng(config.bootstrap_seed).permutation(len(oos_label))]
     primary_prediction_pass = bool(
-        primary_bootstrap["brier_improvement"]["lower_95"] > 0.0
-        and primary_bootstrap["log_loss_improvement"]["lower_95"] > 0.0
+        primary_bootstrap["brier_improvement"]["lower_one_sided_95"] > 0.0
+        and primary_bootstrap["log_loss_improvement"]["lower_one_sided_95"] > 0.0
     )
     directional_prediction_pass = bool(
         brier_score(oos_probability, oos_label) < brier_score(conditional_probability, oos_label)
-        and bootstrap_sensitivity[f"{config.bootstrap_block_sensitivity_minutes[-1]}_observed_minutes"]["brier_improvement"]["lower_95"] > 0.0
+        and bootstrap_sensitivity[f"{config.bootstrap_block_sensitivity_minutes[-1]}_observed_minutes"]["brier_improvement"]["lower_one_sided_95"] > 0.0
     )
     tier_counts = pd.Series(conditional_tiers, dtype="string").value_counts().to_dict()
+    policy_sensitivities = _entry_policy_sensitivity_views(
+        labelled, oos.index, times, timeline_segment_ids, config)
+    emissions = annotate_entry_diagnostics(emissions)
     summary: dict[str, Any] = {
         "version": VERSION,
         "interpretation": "causal classical residual-level research only; no execution, PnL, capacity, or market-impact claim",
@@ -1268,29 +1509,31 @@ def run_arrays(times: np.ndarray, log_prices: np.ndarray, test_start_index: int,
             "test_start": pd.Timestamp(int(times[test_start_index]), unit="ns", tz="UTC").isoformat(),
             "warmup_steps": config.warmup_steps,
         },
+        "contract_version": VERSION,
         "evaluation": {
             "train_samples": int(len(train)),
             "oos_samples": int(len(oos)),
-            "model_three_class": {"brier_score": multiclass_brier_score(model_probabilities, oos_class), "log_loss": multiclass_log_loss(model_probabilities, oos_class), "class_order": ["neutral", "positive", "negative"]},
+            "model_three_class": {"brier_score": multiclass_brier_score(model_probabilities, oos_class), "log_loss": multiclass_log_loss(model_probabilities, oos_class), "class_order": list(PRIMARY_CLASS_ORDER)},
             "basket_standardized_return": {"mean": float(labelled["basket_standardized_return"].mean()), "neutral_outcomes_included": int((labelled["basket_outcome_class"] == 0).sum())},
-            "three_class_train_prior": {"probabilities": class_prior.tolist(), "brier_score": multiclass_brier_score(prior_probabilities, oos_class), "log_loss": multiclass_log_loss(prior_probabilities, oos_class)},
-            "primary_three_class_observed_minute_block_bootstrap": {"samples": config.bootstrap_samples, "exact_replicate_entry_count": int(len(oos)), "block_unit": "actual contiguous observed one-minute bars", "sensitivity": primary_bootstrap_sensitivity},
+            "three_class_global_train_prior_simple_comparator": {"probabilities": class_prior.tolist(), "brier_score": multiclass_brier_score(prior_probabilities, oos_class), "log_loss": multiclass_log_loss(prior_probabilities, oos_class)},
+            "primary_three_class_conditional_climatology": frozen_view,
+            "primary_three_class_observed_minute_block_bootstrap": frozen_view["observed_minute_block_bootstrap"],
             "primary_three_class_passes_prediction_gate": primary_prediction_pass,
             "frozen_train_prior": {"probability": frozen_train_prior, "brier_score": brier_score(prior_probability, oos_label), "log_loss": log_loss(prior_probability, oos_label), "calibration_error": calibration_error(prior_probability, oos_label)},
-            "frozen_conditional_climatology": {"brier_score": brier_score(conditional_probability, oos_label), "log_loss": log_loss(conditional_probability, oos_label), "calibration_error": calibration_error(conditional_probability, oos_label), "tier_counts": {str(key): int(value) for key, value in tier_counts.items()}},
+            "secondary_binary_directional_conditional_climatology_neutral_rows_excluded": {"brier_score": brier_score(conditional_probability, oos_label), "log_loss": log_loss(conditional_probability, oos_label), "calibration_error": calibration_error(conditional_probability, oos_label), "tier_counts": {str(key): int(value) for key, value in tier_counts.items()}},
             "time_shuffled_residual_placebo": {"model_brier_score": brier_score(oos_probability, shuffled_labels), "conditional_climatology_brier_score": brier_score(conditional_probability, shuffled_labels), "seed": config.bootstrap_seed},
             "observed_minute_block_bootstrap": {"samples": config.bootstrap_samples, "exact_replicate_entry_count": int(len(oos)), "block_unit": "actual contiguous observed one-minute bars", "entries_selected_from_time_blocks": True, "sensitivity": bootstrap_sensitivity},
             "secondary_directional_passes_conditional_climatology_gate": directional_prediction_pass,
-            "purged_embargoed_sensitivity": {
-                "horizon_steps": config.max_horizon_steps,
+            "purge_embargo_comparator_sensitivity": {
+                "actual_row_specific_horizons": True,
                 "train_rows_total": purge_summary.train_rows_total,
                 "purged_rows": purge_summary.purged_rows,
                 "embargoed_extra_purged_rows": purge_summary.embargoed_extra_purged_rows,
                 "remaining_train_rows": purge_summary.remaining_train_rows,
-                "three_class_train_prior": {"probabilities": purged_class_prior.tolist(),
-                                               "brier_score": multiclass_brier_score(purged_prior_probabilities, oos_class),
-                                               "log_loss": multiclass_log_loss(purged_prior_probabilities, oos_class)},
+                "views": [frozen_view, purged_view, embargoed_view],
             },
+            "entry_policy_sensitivities": policy_sensitivities,
+            "confidence_bound_convention": "lower_one_sided_95=q0.05; upper_one_sided_95=q0.95; two_sided_95_lower=q0.025; two_sided_95_upper=q0.975; lower_95_deprecated/upper_95_deprecated are compatibility aliases only",
         },
         "entry_policy": summarize_entry_policy(emissions).__dict__,
         "optimizer": {"infeasible_entry_rejections": optimizer_rejections,
@@ -1336,40 +1579,155 @@ def load_common_log_prices(max_rows: int, test_year: int | None) -> tuple[np.nda
     return times, np.log(prices), test_start_index
 
 
-def write_result(result: ArenaResult, out_dir: Path, label: str) -> dict[str, str]:
-    """Write only versioned v0.2 artifacts; v0.1 archives are never overwritten."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    prefix = f"stat_arb_v0_2_{label}"
-    emissions_path = out_dir / f"{prefix}_minute.parquet"
-    graph_path = out_dir / f"{prefix}_graph.parquet"
-    daily_path = out_dir / f"{prefix}_daily.parquet"
-    summary_path = out_dir / f"{prefix}_summary.json"
-    manifest_path = out_dir / f"{prefix}_manifest.json"
-    result.emissions.to_parquet(emissions_path, index=False, compression="zstd")
-    result.graph.to_parquet(graph_path, index=False, compression="zstd")
-    daily = (result.emissions.assign(day=result.emissions["timestamp"].dt.floor("D"))
-             .groupby("day", as_index=False)
-             .agg(emissions=("source_index", "size"),
-                  mean_p_basket_directional=("p_basket_directional", "mean"),
-                  diagnostic_turnover_l1=("turnover_l1_diagnostic", "sum")))
-    daily.to_parquet(daily_path, index=False, compression="zstd")
-    result.summary["outputs"] = {"minute": str(emissions_path.relative_to(ROOT)).replace("\\", "/"), "graph": str(graph_path.relative_to(ROOT)).replace("\\", "/"), "daily": str(daily_path.relative_to(ROOT)).replace("\\", "/")}
-    result.summary["source_hashes"] = {"models/statistical/stat_arb.py": sha256_file(Path(__file__).resolve()), **{f"data/canonical/{pair}.parquet": sha256_file(CANONICAL_DIR / f"{pair}.parquet") for pair in PAIRS}}
-    summary_schema = json.loads((ROOT / "engine" / "config" / "schemas" / "stat-arb-summary.schema.json").read_text(encoding="utf-8"))
-    schema_errors = validate_instance(summary_schema, result.summary)
-    if schema_errors:
-        raise ContractError(f"refusing to write schema-invalid stat-arb summary: {schema_errors}")
-    summary_path.write_text(json.dumps(result.summary, indent=2) + "\n", encoding="utf-8")
-    manifest = build_run_manifest(
-        root=ROOT, frozen_contract_version=VERSION, required_tests_passed=False,
-        holdout_status="burned_acknowledged", source_files=[Path(__file__)],
-        input_artifacts=[CANONICAL_DIR / f"{pair}.parquet" for pair in PAIRS],
-        output_artifacts=[emissions_path, graph_path, daily_path, summary_path],
-        configuration={"label": label, "version": VERSION},
-    )
-    write_manifest(manifest, manifest_path)
-    return {"minute": str(emissions_path), "graph": str(graph_path), "daily": str(daily_path),
-            "summary": str(summary_path), "manifest": str(manifest_path)}
+def _json_ready(value: Any, *, required: bool = False, null_nonfinite: bool = False) -> Any:
+    """Convert pandas/NumPy scalars deliberately and reject invalid required JSON."""
+    if value is pd.NA or value is pd.NaT or (not isinstance(value, (str, bytes, list, dict)) and pd.isna(value)):
+        if required:
+            raise ContractError("required JSON field is null or non-finite")
+        return None
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            if required or not null_nonfinite:
+                raise ContractError("required JSON field is non-finite")
+            return None
+        return value
+    if isinstance(value, (str, int, bool)) or value is None:
+        if required and value is None:
+            raise ContractError("required JSON field is null")
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_ready(item, null_nonfinite=null_nonfinite) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item, null_nonfinite=null_nonfinite) for item in value]
+    raise ContractError(f"cannot serialize {type(value).__name__} at the stat-arb JSON boundary")
+
+
+def _strict_json_text(payload: dict[str, Any]) -> str:
+    """Serialize the exact bytes to be published; NaN and infinity are forbidden."""
+    try:
+        return json.dumps(_json_ready(payload), indent=2, sort_keys=True, allow_nan=False) + "\n"
+    except (TypeError, ValueError) as exc:
+        raise ContractError("stat-arb JSON serialization rejected a non-finite or unsupported value") from exc
+
+
+def _validate_frame_rows(frame: pd.DataFrame, schema_name: str) -> None:
+    schema_path = ROOT / "engine" / "config" / "schemas" / schema_name
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    required = set(schema.get("required", []))
+    non_nullable_required = {
+        name for name in required
+        if "null" not in (schema.get("properties", {}).get(name, {}).get("type", []))
+    }
+    for row_number, (_, row) in enumerate(frame.iterrows()):
+        serialized = {
+            str(column): _json_ready(value, required=str(column) in non_nullable_required, null_nonfinite=True)
+            for column, value in row.items()
+        }
+        errors = validate_instance(schema, serialized)
+        if errors:
+            raise ContractError(f"{schema_name} rejected row {row_number}: {errors}")
+
+
+def _daily_artifact(emissions: pd.DataFrame) -> pd.DataFrame:
+    return (emissions.assign(day=emissions["timestamp"].dt.floor("D"))
+            .groupby("day", as_index=False)
+            .agg(emissions=("source_index", "size"),
+                 mean_p_basket_directional=("p_basket_directional", "mean"),
+                 diagnostic_turnover_l1=("turnover_l1_diagnostic", "sum")))
+
+
+def write_result(result: ArenaResult, out_dir: Path, label: str,
+                 run_id: str | None = None) -> dict[str, str]:
+    """Publish one complete v0.2.1 run directory, or publish nothing at all."""
+    output_root = Path(out_dir).resolve()
+    run_id = run_id or str(uuid.uuid4())
+    try:
+        run_id = str(uuid.UUID(str(run_id)))
+    except (TypeError, ValueError) as exc:
+        raise ContractError("run_id must be a UUID compatible with the research manifest") from exc
+    runs_root = output_root / "stat_arb_v0_2_1_runs"
+    final_dir = runs_root / run_id
+    staging_dir = runs_root / f".{run_id}.staging-{uuid.uuid4()}"
+    if final_dir.exists():
+        raise ContractError(f"refusing to overwrite an existing stat-arb run directory: {final_dir}")
+    runs_root.mkdir(parents=True, exist_ok=True)
+    if staging_dir.exists():
+        raise ContractError(f"refusing to reuse an existing staging directory: {staging_dir}")
+
+    paths = {
+        "minute": "minute.parquet",
+        "graph": "graph.parquet",
+        "daily": "daily.parquet",
+        "summary": "summary.json",
+        "manifest": "manifest.json",
+    }
+    try:
+        staging_dir.mkdir()
+        emissions_path = staging_dir / paths["minute"]
+        graph_path = staging_dir / paths["graph"]
+        daily_path = staging_dir / paths["daily"]
+        summary_path = staging_dir / paths["summary"]
+        manifest_path = staging_dir / paths["manifest"]
+        daily = _daily_artifact(result.emissions)
+        _validate_frame_rows(result.emissions, "stat-arb-emission.schema.json")
+        _validate_frame_rows(result.graph, "stat-arb-graph.schema.json")
+        _validate_frame_rows(daily, "stat-arb-daily.schema.json")
+        result.emissions.to_parquet(emissions_path, index=False, compression="zstd")
+        result.graph.to_parquet(graph_path, index=False, compression="zstd")
+        daily.to_parquet(daily_path, index=False, compression="zstd")
+
+        source_hashes = {
+            "engine/models/statistical/stat_arb.py": sha256_file(Path(__file__).resolve()),
+            **{f"data/canonical/{pair}.parquet": sha256_file(CANONICAL_DIR / f"{pair}.parquet") for pair in PAIRS},
+        }
+        complete_summary = dict(result.summary)
+        complete_summary["version"] = VERSION
+        complete_summary["contract_version"] = VERSION
+        complete_summary["artifact_paths"] = {
+            "run_directory": f"stat_arb_v0_2_1_runs/{run_id}",
+            **paths,
+        }
+        complete_summary["outputs"] = dict(complete_summary["artifact_paths"])
+        complete_summary["source_hashes"] = source_hashes
+        summary_schema = json.loads((ROOT / "engine" / "config" / "schemas" /
+                                     "stat-arb-summary.schema.json").read_text(encoding="utf-8"))
+        schema_errors = validate_instance(summary_schema, _json_ready(complete_summary))
+        if schema_errors:
+            raise ContractError(f"refusing to publish schema-invalid stat-arb summary: {schema_errors}")
+        summary_text = _strict_json_text(complete_summary)
+        summary_path.write_text(summary_text, encoding="utf-8")
+
+        manifest = build_run_manifest(
+            root=ROOT, frozen_contract_version=VERSION, required_tests_passed=False,
+            holdout_status="burned_acknowledged", source_files=[Path(__file__)],
+            input_artifacts=[CANONICAL_DIR / f"{pair}.parquet" for pair in PAIRS],
+            output_artifacts=[emissions_path, graph_path, daily_path, summary_path],
+            configuration={"label": label, "version": VERSION, "run_id": run_id}, run_id=run_id,
+        )
+        manifest_schema = json.loads((ROOT / "engine" / "config" / "schemas" /
+                                      "research-run-manifest.schema.json").read_text(encoding="utf-8"))
+        if not verify_manifest_integrity(manifest):
+            raise ContractError("refusing to publish a manifest with invalid integrity hash")
+        manifest_errors = validate_instance(manifest_schema, _json_ready(manifest))
+        if manifest_errors:
+            raise ContractError(f"refusing to publish schema-invalid manifest: {manifest_errors}")
+        write_manifest(manifest, manifest_path)
+        if not verify_manifest_integrity(json.loads(manifest_path.read_text(encoding="utf-8"))):
+            raise ContractError("staged manifest did not preserve its integrity hash")
+        os.replace(staging_dir, final_dir)
+        result.summary.clear()
+        result.summary.update(json.loads(summary_text))
+        return {name: str(final_dir / relative) for name, relative in paths.items()} | {
+            "run_directory": str(final_dir),
+        }
+    except Exception:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir)
+        raise
 
 
 def synthetic_input(rows: int = 900) -> tuple[np.ndarray, np.ndarray]:
@@ -1443,9 +1801,8 @@ def main(argv: list[str] | None = None) -> int:
         times, prices, test_start = load_common_log_prices(args.max_rows, args.test_year)
         result = run_arrays(times, prices, test_start, ArenaConfig(basket_mode=args.basket_mode))
         label = f"outer_{args.test_year}" if args.test_year is not None else "bounded_latest"
-        outputs = write_result(result, args.out_dir.resolve(), label)
-        result.summary["artifact_paths"] = outputs
-        print(json.dumps(result.summary, indent=2))
+        write_result(result, args.out_dir.resolve(), label)
+        print(_strict_json_text(result.summary), end="")
         return 0
     except (ContractError, SharedContractError, ValueError, OSError, np.linalg.LinAlgError) as exc:
         print(f"[FATAL] {type(exc).__name__}: {exc}", file=sys.stderr)

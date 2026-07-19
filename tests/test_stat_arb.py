@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 
@@ -298,3 +299,59 @@ def test_arena_uses_frozen_level_targets_and_never_promotes_bid_only_data() -> N
     assert primary_gate["exact_replicate_entry_count"] == result.summary["evaluation"]["oos_samples"]
     assert "log_loss_improvement" in primary_gate["sensitivity"]["32_observed_minutes"]
     assert result.summary["promotion_status"].startswith("REJECTED")
+
+
+def _climatology_frame(labels: list[int]) -> pd.DataFrame:
+    count = len(labels)
+    return pd.DataFrame({
+        "entry_residual_level": np.full(count, 1.6),
+        "selected_component_index": np.zeros(count, dtype=np.int64),
+        "session_bucket": np.zeros(count, dtype=np.int64),
+        "active_regime": ["low"] * count,
+        "basket_class": labels,
+    })
+
+
+def test_three_class_conditional_climatology_is_train_only_smoothed_and_deterministic() -> None:
+    train = _climatology_frame([0] * 20 + [1] * 2)
+    target = _climatology_frame([2, 2])
+    target.loc[1, "entry_residual_level"] = 9.0  # sparse cell -> global fallback
+    probabilities, tiers = stat_arb.frozen_three_class_conditional_climatology(train, target)
+    mutated = target.copy()
+    mutated["basket_class"] = [0, 1]
+    repeated, repeated_tiers = stat_arb.frozen_three_class_conditional_climatology(train, mutated)
+    np.testing.assert_allclose(probabilities, repeated)
+    assert tiers == repeated_tiers
+    assert tiers[0] == "level_component_session_regime"
+    assert tiers[1] == "global_three_class_train_prior"
+    assert np.isfinite(probabilities).all()
+    assert (probabilities > 0.0).all()  # Laplace alpha prevents log-loss explosions.
+    np.testing.assert_allclose(probabilities.sum(axis=1), 1.0)
+
+
+def test_confidence_bounds_have_declared_one_and_two_sided_quantiles() -> None:
+    estimates = np.arange(100, dtype=np.float64)
+    bounds = stat_arb._confidence_bounds(7.0, estimates)
+    assert bounds["point"] == 7.0
+    assert bounds["lower_one_sided_95"] == pytest.approx(np.quantile(estimates, 0.05))
+    assert bounds["upper_one_sided_95"] == pytest.approx(np.quantile(estimates, 0.95))
+    assert bounds["two_sided_95_lower"] == pytest.approx(np.quantile(estimates, 0.025))
+    assert bounds["two_sided_95_upper"] == pytest.approx(np.quantile(estimates, 0.975))
+    assert bounds["lower_95_deprecated"] == bounds["lower_one_sided_95"]
+
+
+def test_primary_gate_and_purged_views_use_refit_conditional_comparators() -> None:
+    times, log_prices = stat_arb.synthetic_input()
+    result = stat_arb.run_arrays(times, log_prices, test_start_index=500, config=FAST_CONFIG)
+    evaluation = result.summary["evaluation"]
+    primary = evaluation["primary_three_class_conditional_climatology"]
+    assert primary["comparator"]["identity"] == "three_class_conditional_climatology"
+    assert primary["comparator"]["symmetric_dirichlet_alpha"] == 1.0
+    views = evaluation["purge_embargo_comparator_sensitivity"]["views"]
+    assert [view["name"] for view in views] == [
+        "frozen_chronological_training", "purged_training", "purged_plus_embargoed_training",
+    ]
+    assert all(view["comparator"]["identity"] == "three_class_conditional_climatology" for view in views)
+    assert evaluation["primary_three_class_observed_minute_block_bootstrap"] == primary["observed_minute_block_bootstrap"]
+    assert "three_class_global_train_prior_simple_comparator" in evaluation
+    assert list(evaluation["entry_policy_sensitivities"]) == list(stat_arb.ENTRY_POLICY_SENSITIVITY_ORDER)

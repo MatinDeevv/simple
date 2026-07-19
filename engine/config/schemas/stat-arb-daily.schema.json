@@ -1,0 +1,11 @@
+{
+  "schema_version": "fxsim-stat-arb-daily-v1",
+  "title": "stat-arb daily diagnostic aggregate row",
+  "type": "object",
+  "required": ["day", "emissions", "mean_p_basket_directional", "diagnostic_turnover_l1"],
+  "properties": {
+    "day": {"type": "string"}, "emissions": {"type": "integer"},
+    "mean_p_basket_directional": {"type": "number"}, "diagnostic_turnover_l1": {"type": "number"}
+  },
+  "additionalProperties": false
+}

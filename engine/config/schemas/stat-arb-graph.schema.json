@@ -1,0 +1,11 @@
+{
+  "schema_version": "fxsim-stat-arb-graph-v1",
+  "title": "stat-arb graph edge row",
+  "type": "object",
+  "required": ["timestamp", "segment_id", "active_regime", "left_component", "right_component", "partial_correlation"],
+  "properties": {
+    "timestamp": {"type": "string"}, "segment_id": {"type": "integer"}, "active_regime": {"type": "string"},
+    "left_component": {"type": "string"}, "right_component": {"type": "string"}, "partial_correlation": {"type": "number"}
+  },
+  "additionalProperties": false
+}

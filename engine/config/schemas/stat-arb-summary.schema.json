@@ -1,44 +1,38 @@
 {
-  "schema_version": "fxsim-stat-arb-summary-v1",
-  "title": "stat_arb.py run summary.json (engine/stat_arb.py:run_arrays)",
-  "note": "stat_arb.py is under active development (OQ-14); this schema intentionally requires only the structurally stable top-level sections, not every diagnostic sub-field, per docs/repository-verification.md.",
+  "schema_version": "fxsim-stat-arb-summary-v2",
+  "title": "stat-arb v0.2.1 transactional run summary",
   "type": "object",
   "required": [
-    "version", "interpretation", "pair_scope", "target_contract",
-    "causality", "components", "window", "evaluation", "promotion_status"
+    "version", "contract_version", "interpretation", "pair_scope", "target_contract",
+    "causality", "components", "window", "evaluation", "entry_policy", "optimizer",
+    "promotion_status", "artifact_paths", "source_hashes"
   ],
   "properties": {
     "version": {"type": "string"},
+    "contract_version": {"type": "string"},
     "interpretation": {"type": "string"},
     "pair_scope": {"type": "array", "items": {"type": "string"}},
     "target_contract": {"type": "object"},
-    "causality": {
-      "type": "object",
-      "required": ["gap_resets", "max_contiguous_state_steps"],
-      "properties": {
-        "gap_resets": {"type": "integer"},
-        "max_contiguous_state_steps": {"type": "integer"}
-      }
-    },
+    "causality": {"type": "object", "required": ["gap_resets", "max_contiguous_state_steps"], "properties": {"gap_resets": {"type": "integer"}, "max_contiguous_state_steps": {"type": "integer"}}},
     "components": {"type": "object"},
-    "window": {
-      "type": "object",
-      "required": ["start", "end", "raw_rows"],
-      "properties": {
-        "start": {"type": "string"},
-        "end": {"type": "string"},
-        "raw_rows": {"type": "integer"}
-      }
-    },
+    "window": {"type": "object", "required": ["start", "end", "raw_rows"], "properties": {"start": {"type": "string"}, "end": {"type": "string"}, "raw_rows": {"type": "integer"}}},
     "evaluation": {
       "type": "object",
-      "required": ["train_samples", "oos_samples"],
+      "required": ["train_samples", "oos_samples", "primary_three_class_conditional_climatology", "primary_three_class_observed_minute_block_bootstrap", "purge_embargo_comparator_sensitivity", "entry_policy_sensitivities", "confidence_bound_convention"],
       "properties": {
         "train_samples": {"type": "integer"},
-        "oos_samples": {"type": "integer"}
+        "oos_samples": {"type": "integer"},
+        "primary_three_class_conditional_climatology": {"type": "object", "required": ["comparator", "scores"], "properties": {"comparator": {"type": "object"}, "scores": {"type": "object"}}},
+        "primary_three_class_observed_minute_block_bootstrap": {"type": "object", "required": ["sensitivity", "confidence_bound_convention"], "properties": {"sensitivity": {"type": "object"}, "confidence_bound_convention": {"type": "string"}}},
+        "purge_embargo_comparator_sensitivity": {"type": "object", "required": ["views"], "properties": {"views": {"type": "array", "items": {"type": "object"}}}},
+        "entry_policy_sensitivities": {"type": "object"},
+        "confidence_bound_convention": {"type": "string"}
       }
     },
+    "entry_policy": {"type": "object"},
+    "optimizer": {"type": "object", "required": ["infeasible_entry_rejections", "infeasible_entries_are_ineligible"], "properties": {"infeasible_entry_rejections": {"type": "integer"}, "infeasible_entries_are_ineligible": {"type": "boolean"}}},
     "promotion_status": {"type": "string"},
+    "artifact_paths": {"type": "object", "required": ["run_directory", "minute", "graph", "daily", "summary", "manifest"], "properties": {"run_directory": {"type": "string"}, "minute": {"type": "string"}, "graph": {"type": "string"}, "daily": {"type": "string"}, "summary": {"type": "string"}, "manifest": {"type": "string"}}},
     "outputs": {"type": "object"},
     "source_hashes": {"type": "object"}
   },

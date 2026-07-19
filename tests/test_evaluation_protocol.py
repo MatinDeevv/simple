@@ -117,3 +117,52 @@ def test_build_evaluation_metadata_end_to_end() -> None:
 def test_build_evaluation_metadata_rejects_mismatched_lengths() -> None:
     with pytest.raises(ep.EvaluationProtocolError):
         ep.build_evaluation_metadata(np.array([1, 2]), 5, np.array([0]), np.array([True, False]))
+
+
+def test_row_specific_horizons_drive_endpoints_and_clusters() -> None:
+    source = np.array([30, 0, 15, 16])  # deliberately unsorted
+    horizon = np.array([15, 30, 15, 30])
+    segments = np.array([1, 0, 0, 0])
+    start, end = ep.target_interval(source, horizon)
+    np.testing.assert_array_equal(start, source)
+    np.testing.assert_array_equal(end, [45, 30, 30, 46])
+    clusters = ep.assign_target_clusters(source, horizon, segments)
+    assert clusters[1] == clusters[2] == clusters[3]
+    assert clusters[0] != clusters[1]
+
+
+@pytest.mark.parametrize("invalid", [True, -1, np.array([15.5, 30.0]), np.array([15, 30, 45]),
+                                     np.array([[15, 30]]), np.array([np.inf, 30.0])])
+def test_target_interval_rejects_invalid_scalar_or_vector_horizons(invalid: object) -> None:
+    with pytest.raises(ep.EvaluationProtocolError):
+        ep.target_interval(np.array([0, 1]), invalid)  # type: ignore[arg-type]
+
+
+def test_purge_and_embargo_are_scoped_to_causal_segments() -> None:
+    train_start = np.array([95, 95, 130])
+    train_end = np.array([110, 110, 145])
+    train_segment = np.array([0, 1, 1])
+    held_start = np.array([100])
+    held_end = np.array([120])
+    held_segment = np.array([1])
+    purge = ep.purge_overlapping_training_rows(train_start, train_end, held_start, held_end,
+                                               train_segment, held_segment)
+    np.testing.assert_array_equal(purge, [False, True, False])
+    wide_start, wide_end = ep.apply_embargo(held_start, held_end, 15)
+    embargo = ep.purge_overlapping_training_rows(train_start, train_end, wide_start, wide_end,
+                                                 train_segment, held_segment)
+    np.testing.assert_array_equal(embargo, [False, True, True])
+
+
+def test_metadata_excludes_split_crossers_without_treating_them_as_oos() -> None:
+    source = np.array([80, 90, 100, 110])
+    horizon = np.array([15, 15, 15, 15])
+    segments = np.zeros(4, dtype=np.int64)
+    # source=90 crosses the split at 100 and is neither frozen train nor OOS.
+    metadata, _summary = ep.build_evaluation_metadata(
+        source, horizon, segments, np.array([True, False, False, False]),
+        embargo_steps=5, is_evaluation=np.array([False, False, True, True]),
+    )
+    assert not metadata.loc[0, "purged_from_training"]
+    assert not metadata.loc[1, "purged_from_training"]
+    assert metadata.loc[1, "target_end_index"] == 105
