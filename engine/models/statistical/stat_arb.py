@@ -31,7 +31,7 @@ import pandas as pd
 
 from engine.core.contracts import (ContractError as SharedContractError, canonical_pair_order,
                        contiguous_60s, validate_generated_manifest)
-from engine.core.run_manifest import build_run_manifest, verify_manifest_integrity, write_manifest
+from engine.core.run_manifest import build_run_manifest, canonical_json, verify_manifest_integrity, write_manifest
 from engine.core.schema_validate import validate_instance
 from engine.evaluation.entry_diagnostics import (
     ENTRY_POLICIES,
@@ -537,12 +537,27 @@ def observed_minute_block_multiclass_bootstrap_comparison(model_probabilities: n
                                                           timeline_segment_ids: np.ndarray, block_minutes: int,
                                                           samples: int, seed: int) -> dict[str, dict[str, float]]:
     """Observed-minute block CIs for the primary three-class target."""
+    if samples < 1:
+        raise ContractError("multiclass bootstrap samples must be positive")
+    if block_minutes < 1:
+        raise ContractError("multiclass bootstrap block_minutes must be positive")
     model = np.asarray(model_probabilities, dtype=np.float64)
     baseline = np.asarray(baseline_probabilities, dtype=np.float64)
     outcome = np.asarray(labels, dtype=np.int8)
-    if model.ndim != 2 or model.shape[1] != 3 or model.shape != baseline.shape or len(model) < 2 or len(model) != len(outcome):
-        return {name: _insufficient_confidence_bounds()
-                for name in ("brier_improvement", "log_loss_improvement")}
+    if model.ndim != 2 or model.shape[1] != 3 or model.shape != baseline.shape:
+        raise ContractError("multiclass bootstrap probabilities must be matching N x 3 matrices")
+    if len(model) != len(outcome) or len(model) != len(source_indices) or len(model) != len(source_segment_ids):
+        raise ContractError("multiclass bootstrap inputs must have equal row counts")
+    if len(model) < 2:
+        return {name: _insufficient_confidence_bounds() for name in ("brier_improvement", "log_loss_improvement")}
+    if (not np.isfinite(model).all() or not np.isfinite(baseline).all() or (model < 0.0).any()
+            or (baseline < 0.0).any() or not np.allclose(model.sum(axis=1), 1.0, atol=1.0e-9)
+            or not np.allclose(baseline.sum(axis=1), 1.0, atol=1.0e-9)):
+        raise ContractError("multiclass bootstrap probabilities must be finite, nonnegative, and row-normalized")
+    if not np.isin(outcome, (0, 1, 2)).all():
+        raise ContractError("multiclass bootstrap labels must be in {0, 1, 2}")
+    if len(np.unique(source_indices)) != len(source_indices):
+        raise ContractError("multiclass bootstrap rejects duplicate source indices")
     point = np.array([multiclass_brier_score(baseline, outcome) - multiclass_brier_score(model, outcome),
                       multiclass_log_loss(baseline, outcome) - multiclass_log_loss(model, outcome)])
     estimates = np.empty((samples, 2), dtype=np.float64)
@@ -1139,44 +1154,68 @@ def _evaluate_three_class_comparator_view(name: str, train: pd.DataFrame, oos: p
 def _entry_policy_sensitivity_views(labelled: pd.DataFrame, oos_index: pd.Index,
                                     times: np.ndarray, timeline_segment_ids: np.ndarray,
                                     config: ArenaConfig) -> dict[str, Any]:
-    """Expose overlap dependence without selecting a policy by its score."""
+    """Policy-consistent comparators; no policy is selected by its score.
+
+    ``reset_at_oos_start`` is the primary descriptive sensitivity: train and
+    OOS policy state are independent. ``carry_chronological_state_into_oos``
+    exposes the operational consequence of targets/episodes spanning the split.
+    """
+    train = labelled.loc[~labelled.index.isin(oos_index)].copy()
+    oos = labelled.loc[oos_index].copy()
+
+    def score(policy: str, annotated_train: pd.DataFrame, annotated_oos: pd.DataFrame,
+              boundary: str) -> dict[str, Any]:
+        accepted_train = annotated_train.loc[annotated_train["accepted"]].copy()
+        accepted_oos = annotated_oos.loc[annotated_oos["accepted"]].copy()
+        result: dict[str, Any] = {
+            "boundary_contract": boundary,
+            "train_row_count_before_policy": int(len(annotated_train)),
+            "train_accepted_count": int(len(accepted_train)),
+            "oos_row_count_before_policy": int(len(annotated_oos)),
+            "oos_accepted_count": int(len(accepted_oos)),
+            "train_unique_signal_episodes": int(accepted_train.loc[accepted_train["entry_episode_id"] >= 0, "entry_episode_id"].nunique()),
+            "oos_unique_signal_episodes": int(accepted_oos.loc[accepted_oos["entry_episode_id"] >= 0, "entry_episode_id"].nunique()),
+            "train_unique_target_clusters": int(accepted_train["target_cluster_id"].nunique()),
+            "oos_unique_target_clusters": int(accepted_oos["target_cluster_id"].nunique()),
+            "conditional_comparator_identity": "three_class_conditional_climatology",
+            "symmetric_dirichlet_alpha": PRIMARY_CLIMATOLOGY_ALPHA,
+            "minimum_cell_count": PRIMARY_CLIMATOLOGY_MINIMUM_CELL_COUNT,
+        }
+        if len(accepted_train) < 2:
+            result.update(status="insufficient_train_population", insufficiency_reason="fewer than two accepted training rows")
+            return result
+        if len(accepted_oos) < 2:
+            result.update(status="insufficient_oos_population", insufficiency_reason="fewer than two accepted OOS rows")
+            return result
+        class_counts = accepted_oos["basket_class"].value_counts().reindex([0, 1, 2], fill_value=0)
+        result["train_class_counts"] = {PRIMARY_CLASS_ORDER[key]: int(value) for key, value in accepted_train["basket_class"].value_counts().reindex([0, 1, 2], fill_value=0).items()}
+        result["oos_class_counts"] = {PRIMARY_CLASS_ORDER[key]: int(value) for key, value in class_counts.items()}
+        model = accepted_oos[["p_basket_neutral", "p_basket_positive", "p_basket_negative"]].to_numpy(dtype=np.float64)
+        baseline, tiers = frozen_three_class_conditional_climatology(accepted_train, accepted_oos)
+        labels = accepted_oos["basket_class"].to_numpy(dtype=np.int8)
+        result["fallback_tier_counts"] = {str(key): int(value) for key, value in pd.Series(tiers).value_counts().items()}
+        result["scores"] = _three_class_score_view(model, baseline, labels)
+        try:
+            result["uncertainty"] = {f"{minutes}_observed_minutes": observed_minute_block_multiclass_bootstrap_comparison(
+                model, baseline, labels, accepted_oos["source_index"].to_numpy(dtype=np.int64),
+                accepted_oos["segment_id"].to_numpy(dtype=np.int64), times, timeline_segment_ids, minutes,
+                config.bootstrap_samples, config.bootstrap_seed + 20_000 + ENTRY_POLICY_SENSITIVITY_ORDER.index(policy) * 100 + minutes)
+                for minutes in config.bootstrap_block_sensitivity_minutes}
+        except ContractError as exc:
+            result.update(status="insufficient_bootstrap_support", insufficiency_reason=str(exc))
+            return result
+        result["status"] = "scored"
+        return result
+
     views: dict[str, Any] = {}
     for policy in ENTRY_POLICY_SENSITIVITY_ORDER:
-        annotated = annotate_entry_diagnostics(labelled, policy=policy)
-        view = annotated.loc[oos_index]
-        accepted = view["accepted"].to_numpy(dtype=bool)
-        accepted_rows = view.loc[accepted]
-        class_counts = (accepted_rows["basket_class"].value_counts()
-                        .reindex([0, 1, 2], fill_value=0).to_dict())
-        result: dict[str, Any] = {
-            "eligible_row_count": int(view["entry_eligible"].sum()),
-            "accepted_row_count": int(accepted.sum()),
-            "unique_episode_count": int(view.loc[accepted & (view["entry_episode_id"] >= 0),
-                                                  "entry_episode_id"].nunique()),
-            "unique_target_cluster_count": int(accepted_rows["target_cluster_id"].nunique()),
-            "class_counts": {PRIMARY_CLASS_ORDER[key]: int(value) for key, value in class_counts.items()},
-        }
-        if len(accepted_rows) < 2:
-            result["status"] = "insufficient_sample"
-            result["uncertainty"] = _insufficient_confidence_bounds()
-        else:
-            model = accepted_rows[["p_basket_neutral", "p_basket_positive", "p_basket_negative"]].to_numpy(dtype=np.float64)
-            baseline = accepted_rows[["p_primary_conditional_neutral", "p_primary_conditional_positive",
-                                     "p_primary_conditional_negative"]].to_numpy(dtype=np.float64)
-            labels = accepted_rows["basket_class"].to_numpy(dtype=np.int8)
-            result["status"] = "scored"
-            result["scores"] = _three_class_score_view(model, baseline, labels)
-            result["uncertainty"] = {
-                f"{block_minutes}_observed_minutes": observed_minute_block_multiclass_bootstrap_comparison(
-                    model, baseline, labels,
-                    accepted_rows["source_index"].to_numpy(dtype=np.int64),
-                    accepted_rows["segment_id"].to_numpy(dtype=np.int64), times, timeline_segment_ids,
-                    block_minutes, config.bootstrap_samples,
-                    config.bootstrap_seed + 20_000 + ENTRY_POLICY_SENSITIVITY_ORDER.index(policy) * 100 + block_minutes,
-                )
-                for block_minutes in config.bootstrap_block_sensitivity_minutes
-            }
-        views[policy] = result
+        reset = score(policy, annotate_entry_diagnostics(train, policy=policy),
+                      annotate_entry_diagnostics(oos, policy=policy), "reset_at_oos_start")
+        chronological = annotate_entry_diagnostics(labelled, policy=policy)
+        carry = score(policy, chronological.loc[train.index], chronological.loc[oos.index],
+                      "carry_chronological_state_into_oos")
+        views[policy] = {**reset, "boundary_contracts": {"reset_at_oos_start": reset,
+                                                            "carry_chronological_state_into_oos": carry}}
     return views
 
 
@@ -1617,19 +1656,57 @@ def _strict_json_text(payload: dict[str, Any]) -> str:
 def _validate_frame_rows(frame: pd.DataFrame, schema_name: str) -> None:
     schema_path = ROOT / "engine" / "config" / "schemas" / schema_name
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    if frame.columns.duplicated().any():
+        raise ContractError(f"{schema_name} frame has duplicate columns")
     required = set(schema.get("required", []))
-    non_nullable_required = {
-        name for name in required
-        if "null" not in (schema.get("properties", {}).get(name, {}).get("type", []))
-    }
-    for row_number, (_, row) in enumerate(frame.iterrows()):
-        serialized = {
-            str(column): _json_ready(value, required=str(column) in non_nullable_required, null_nonfinite=True)
-            for column, value in row.items()
-        }
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ContractError(f"{schema_name} frame is missing required columns: {missing}")
+    properties = schema.get("properties", {})
+    for name in required:
+        values = frame[name]
+        declared = properties.get(name, {}).get("type", [])
+        allowed = set(declared if isinstance(declared, list) else [declared])
+        nullable = "null" in allowed
+        if not nullable and values.isna().any():
+            raise ContractError(f"{schema_name}.{name} has null required values")
+        non_null = values.dropna()
+        if "integer" in allowed:
+            numeric = pd.to_numeric(non_null, errors="coerce")
+            if numeric.isna().any() or not np.isfinite(numeric.to_numpy(dtype=float)).all() or not np.equal(numeric % 1, 0).all():
+                raise ContractError(f"{schema_name}.{name} must contain finite integer values")
+        elif "number" in allowed:
+            numeric = pd.to_numeric(non_null, errors="coerce")
+            if numeric.isna().any() or not np.isfinite(numeric.to_numpy(dtype=float)).all():
+                raise ContractError(f"{schema_name}.{name} must contain finite numeric values")
+        elif "boolean" in allowed and not non_null.map(lambda value: isinstance(value, (bool, np.bool_))).all():
+            raise ContractError(f"{schema_name}.{name} must contain boolean values")
+        elif "string" in allowed:
+            is_temporal = name in {"timestamp", "target_time", "day"}
+            valid_strings = non_null.map(lambda value: isinstance(value, str) or (is_temporal and hasattr(value, "isoformat")))
+            if not valid_strings.all():
+                raise ContractError(f"{schema_name}.{name} must contain string values")
+    probability_columns = [name for name in ("p_basket_neutral", "p_basket_positive", "p_basket_negative") if name in frame]
+    if probability_columns:
+        probabilities = frame[probability_columns].to_numpy(dtype=float)
+        if not np.isfinite(probabilities).all() or (probabilities < 0.0).any() or (probabilities > 1.0).any() or not np.allclose(probabilities.sum(axis=1), 1.0, atol=1.0e-9):
+            raise ContractError(f"{schema_name} has invalid primary probability rows")
+    if {"target_start_index", "target_end_index", "holding_horizon_steps"} <= set(frame):
+        labelled = frame["target_start_index"].notna() & frame["target_end_index"].notna()
+        if (frame.loc[labelled, "target_end_index"] < frame.loc[labelled, "target_start_index"]).any() or not np.equal(
+                frame.loc[labelled, "target_end_index"] - frame.loc[labelled, "target_start_index"],
+                frame.loc[labelled, "holding_horizon_steps"]).all():
+            raise ContractError(f"{schema_name} has inconsistent target intervals")
+    # Strict schema serialization is retained only for representative rows.
+    sample_positions = sorted({0, len(frame) - 1} | set(np.flatnonzero(frame.isna().any(axis=1))[:4])) if len(frame) else []
+    non_nullable_required = {name for name in required if "null" not in (properties.get(name, {}).get("type", []))}
+    for position in sample_positions:
+        row = frame.iloc[position].to_dict()
+        serialized = {str(column): _json_ready(value, required=str(column) in non_nullable_required, null_nonfinite=True)
+                      for column, value in row.items()}
         errors = validate_instance(schema, serialized)
         if errors:
-            raise ContractError(f"{schema_name} rejected row {row_number}: {errors}")
+            raise ContractError(f"{schema_name} rejected representative row {position}: {errors}")
 
 
 def _daily_artifact(emissions: pd.DataFrame) -> pd.DataFrame:
@@ -1640,11 +1717,27 @@ def _daily_artifact(emissions: pd.DataFrame) -> pd.DataFrame:
                  diagnostic_turnover_l1=("turnover_l1_diagnostic", "sum")))
 
 
+def _final_output_hashes(staging_dir: Path, final_dir: Path, paths: dict[str, str]) -> dict[str, str]:
+    """Hash staged bytes while binding the manifest to deterministic final paths."""
+    return {
+        f"{final_dir.parent.name}/{final_dir.name}/{relative}": sha256_file(staging_dir / relative)
+        for name, relative in paths.items() if name != "manifest"
+    }
+
+
+def _rehash_published_outputs(final_dir: Path, expected: dict[str, str]) -> None:
+    for logical_path, expected_hash in expected.items():
+        path = final_dir.parent.parent / Path(logical_path)
+        if not path.is_file() or sha256_file(path) != expected_hash:
+            raise ContractError(f"published artifact hash verification failed: {logical_path}")
+
+
 def write_result(result: ArenaResult, out_dir: Path, label: str,
                  run_id: str | None = None) -> dict[str, str]:
     """Publish one complete v0.2.1 run directory, or publish nothing at all."""
     output_root = Path(out_dir).resolve()
     run_id = run_id or str(uuid.uuid4())
+    published = False
     try:
         run_id = str(uuid.UUID(str(run_id)))
     except (TypeError, ValueError) as exc:
@@ -1708,6 +1801,9 @@ def write_result(result: ArenaResult, out_dir: Path, label: str,
             output_artifacts=[emissions_path, graph_path, daily_path, summary_path],
             configuration={"label": label, "version": VERSION, "run_id": run_id}, run_id=run_id,
         )
+        manifest["output_artifact_sha256"] = _final_output_hashes(staging_dir, final_dir, paths)
+        manifest_body = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+        manifest["manifest_sha256"] = hashlib.sha256(canonical_json(manifest_body).encode("utf-8")).hexdigest()
         manifest_schema = json.loads((ROOT / "engine" / "config" / "schemas" /
                                       "research-run-manifest.schema.json").read_text(encoding="utf-8"))
         if not verify_manifest_integrity(manifest):
@@ -1719,13 +1815,21 @@ def write_result(result: ArenaResult, out_dir: Path, label: str,
         if not verify_manifest_integrity(json.loads(manifest_path.read_text(encoding="utf-8"))):
             raise ContractError("staged manifest did not preserve its integrity hash")
         os.replace(staging_dir, final_dir)
+        try:
+            _rehash_published_outputs(final_dir, manifest["output_artifact_sha256"])
+            if not all((final_dir.parent.parent / Path(path)).is_file() for path in manifest["output_artifact_sha256"]):
+                raise ContractError("published manifest references a missing output")
+        except BaseException:
+            shutil.rmtree(final_dir)
+            raise
+        published = True
         result.summary.clear()
         result.summary.update(json.loads(summary_text))
         return {name: str(final_dir / relative) for name, relative in paths.items()} | {
             "run_directory": str(final_dir),
         }
-    except Exception:
-        if staging_dir.exists():
+    except BaseException:
+        if not published and staging_dir.exists():
             shutil.rmtree(staging_dir)
         raise
 
