@@ -1,10 +1,191 @@
 {
-  "schema_version": "fxsim-research-run-manifest-v2",
-  "title": "research run manifest",
-  "type": "object",
-  "required": ["manifest_schema_version", "run_id", "created_at_utc", "git_commit", "git_status", "dirty_worktree", "python_version", "platform", "dependency_versions", "dependency_snapshot_sha256", "configuration_sha256", "source_file_sha256", "input_artifact_sha256", "output_artifact_sha256", "random_seeds", "frozen_contract_version", "holdout_status", "required_tests_passed", "required_test_commands", "test_evidence", "promotion_eligible", "promotion_blockers", "manifest_sha256"],
-  "properties": {
-    "manifest_schema_version":{"type":"string","enum":["fxsim-research-run-manifest-v2"]}, "run_id":{"type":"string"}, "created_at_utc":{"type":"string"}, "git_commit":{"type":["string","null"]}, "git_status":{"type":"string","enum":["clean","dirty","unavailable"]}, "dirty_worktree":{"type":["boolean","null"]}, "python_version":{"type":"string"}, "platform":{"type":"string"}, "dependency_versions":{"type":"object"}, "dependency_snapshot_sha256":{"type":"string"}, "configuration_sha256":{"type":"string"}, "source_file_sha256":{"type":"object"}, "input_artifact_sha256":{"type":"object"}, "output_artifact_sha256":{"type":"object"}, "random_seeds":{"type":"object"}, "frozen_contract_version":{"type":"string"}, "holdout_status":{"type":"string","enum":["not_used","clean_holdout","burned_acknowledged"]}, "required_tests_passed":{"type":"boolean"}, "required_test_commands":{"type":"array","items":{"type":"string"}}, "test_evidence":{"type":"array","items":{"type":"object","required":["command","exit_code","commit_sha","started_at_utc","completed_at_utc","artifact_sha256","python_version","dependency_snapshot_sha256"],"properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"commit_sha":{"type":"string"},"started_at_utc":{"type":"string"},"completed_at_utc":{"type":"string"},"artifact_sha256":{"type":"string"},"python_version":{"type":"string"},"dependency_snapshot_sha256":{"type":"string"}},"additionalProperties":false}}, "promotion_eligible":{"type":"boolean"}, "promotion_blockers":{"type":"array","items":{"type":"string"}}, "manifest_sha256":{"type":"string"}
-  },
-  "additionalProperties": false
+    "schema_version":  "fxsim-research-run-manifest-v2",
+    "title":  "research run manifest",
+    "type":  "object",
+    "required":  [
+                     "manifest_schema_version",
+                     "run_id",
+                     "created_at_utc",
+                     "git_commit",
+                     "git_status",
+                     "dirty_worktree",
+                     "python_version",
+                     "platform",
+                     "dependency_versions",
+                     "dependency_snapshot_sha256",
+                     "configuration_sha256",
+                     "source_file_sha256",
+                     "input_artifact_sha256",
+                     "output_artifact_sha256",
+                     "random_seeds",
+                     "frozen_contract_version",
+                     "holdout_status",
+                     "required_tests_passed",
+                     "required_test_commands",
+                     "test_evidence",
+                     "promotion_eligible",
+                     "promotion_blockers",
+                     "manifest_sha256"
+                 ],
+    "properties":  {
+                       "manifest_schema_version":  {
+                                                       "type":  "string",
+                                                       "enum":  [
+                                                                    "fxsim-research-run-manifest-v2"
+                                                                ]
+                                                   },
+                       "run_id":  {
+                                      "type":  "string"
+                                  },
+                       "created_at_utc":  {
+                                              "type":  "string"
+                                          },
+                       "git_commit":  {
+                                          "type":  [
+                                                       "string",
+                                                       "null"
+                                                   ]
+                                      },
+                       "git_status":  {
+                                          "type":  "string",
+                                          "enum":  [
+                                                       "clean",
+                                                       "dirty",
+                                                       "unavailable"
+                                                   ]
+                                      },
+                       "dirty_worktree":  {
+                                              "type":  [
+                                                           "boolean",
+                                                           "null"
+                                                       ]
+                                          },
+                       "python_version":  {
+                                              "type":  "string"
+                                          },
+                       "platform":  {
+                                        "type":  "string"
+                                    },
+                       "dependency_versions":  {
+                                                   "type":  "object"
+                                               },
+                       "dependency_snapshot_sha256":  {
+                                                          "type":  "string"
+                                                      },
+                       "configuration_sha256":  {
+                                                    "type":  "string"
+                                                },
+                       "source_file_sha256":  {
+                                                  "type":  "object"
+                                              },
+                       "input_artifact_sha256":  {
+                                                     "type":  "object"
+                                                 },
+                       "output_artifact_sha256":  {
+                                                      "type":  "object"
+                                                  },
+                       "random_seeds":  {
+                                            "type":  "object"
+                                        },
+                       "frozen_contract_version":  {
+                                                       "type":  "string"
+                                                   },
+                       "holdout_status":  {
+                                              "type":  "string",
+                                              "enum":  [
+                                                           "not_used",
+                                                           "clean_holdout",
+                                                           "burned_acknowledged"
+                                                       ]
+                                          },
+                       "required_tests_passed":  {
+                                                     "type":  "boolean"
+                                                 },
+                       "required_test_commands":  {
+                                                      "type":  "array",
+                                                      "items":  {
+                                                                    "type":  "array",
+                                                                    "items":  {
+                                                                                  "type":  "string"
+                                                                              }
+                                                                }
+                                                  },
+                       "test_evidence":  {
+                                             "type":  "array",
+                                             "items":  {
+                                                           "type":  "object",
+                                                           "required":  [
+                                                                            "command",
+                                                                            "exit_code",
+                                                                            "commit_sha",
+                                                                            "started_at_utc",
+                                                                            "completed_at_utc",
+                                                                            "artifact_sha256",
+                                                                            "python_version",
+                                                                            "dependency_snapshot_sha256"
+                                                                        ],
+                                                           "properties":  {
+                                                                              "command":  {
+                                                                                              "type":  "string"
+                                                                                          },
+                                                                              "exit_code":  {
+                                                                                                "type":  "integer"
+                                                                                            },
+                                                                              "commit_sha":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                              "started_at_utc":  {
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                              "completed_at_utc":  {
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                              "artifact_sha256":  {
+                                                                                                      "type":  "string"
+                                                                                                  },
+                                                                              "python_version":  {
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                              "dependency_snapshot_sha256":  {
+                                                                                                                 "type":  "string"
+                                                                                                             },
+                                                                              "command_argv":  {
+                                                                                                   "type":  "array",
+                                                                                                   "items":  {
+                                                                                                                 "type":  "string"
+                                                                                                             }
+                                                                                               },
+                                                                              "receipt_sha256":  {
+                                                                                                     "type":  "string"
+                                                                                                 },
+                                                                              "receipt_logical_path":  {
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                              "log_logical_path":  {
+                                                                                                       "type":  "string"
+                                                                                                   },
+                                                                              "log_sha256":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                              "physical_files_verified":  {
+                                                                                                              "type":  "boolean"
+                                                                                                          }
+                                                                          },
+                                                           "additionalProperties":  false
+                                                       }
+                                         },
+                       "promotion_eligible":  {
+                                                  "type":  "boolean"
+                                              },
+                       "promotion_blockers":  {
+                                                  "type":  "array",
+                                                  "items":  {
+                                                                "type":  "string"
+                                                            }
+                                              },
+                       "manifest_sha256":  {
+                                               "type":  "string"
+                                           }
+                   },
+    "additionalProperties":  false
 }

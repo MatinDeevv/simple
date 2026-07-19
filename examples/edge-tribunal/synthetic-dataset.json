@@ -1,6 +1,7 @@
 {
   "dataset_name": "synthetic-fx-bid-1min-fixture",
   "provenance": "deterministic synthetic fixture written by hand for the Edge Tribunal walkthrough; no market data file was read to produce it",
+  "provenance_claims": ["synthetic fixture only; no market data inspected"],
   "files": [
     {
       "logical_path": "data/synthetic/eurusd-1min.parquet",
@@ -16,6 +17,7 @@
   "minimum_timestamp_utc": "2020-01-01T00:00:00+00:00",
   "maximum_timestamp_utc": "2025-01-01T00:00:00+00:00",
   "pair_scope": ["EURUSD", "GBPUSD"],
+  "pair_order": ["EURUSD", "GBPUSD"],
   "frequency": "1min",
   "timestamp_timezone": "UTC",
   "columns": ["timestamp_utc", "close_bid", "volume"],

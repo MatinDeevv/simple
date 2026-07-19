@@ -102,13 +102,15 @@ class RegistryLock:
             self._acquired = False
 
 
-def _entries_sha256(entries: list[dict[str, Any]]) -> str:
-    return sha256_payload(entries)
+def _document_sha256(document: dict[str, Any]) -> str:
+    return sha256_payload({"registry_version": document["registry_version"],
+                           "revision": document["revision"],
+                           "entries": document["entries"]})
 
 
 def _empty_registry() -> dict[str, Any]:
-    document: dict[str, Any] = {"registry_version": REGISTRY_VERSION, "entries": []}
-    document["registry_sha256"] = _entries_sha256(document["entries"])
+    document: dict[str, Any] = {"registry_version": REGISTRY_VERSION, "revision": 0, "entries": []}
+    document["registry_sha256"] = _document_sha256(document)
     return document
 
 
@@ -126,14 +128,18 @@ def load_registry(root: Path) -> dict[str, Any]:
     entries = document.get("entries")
     if not isinstance(entries, list):
         raise TribunalError("holdout registry entries must be a list")
-    if document.get("registry_sha256") != _entries_sha256(entries):
+    if not isinstance(document.get("revision"), int) or isinstance(document.get("revision"), bool) \
+            or document["revision"] < 0:
+        raise TribunalError("holdout registry revision is invalid")
+    if document.get("registry_sha256") != _document_sha256(document):
         raise TribunalError("holdout registry integrity hash mismatch: registry was tampered "
                             "with or corrupted")
     return document
 
 
 def _save_registry(root: Path, document: dict[str, Any]) -> None:
-    document["registry_sha256"] = _entries_sha256(document["entries"])
+    document["revision"] = int(document.get("revision", 0)) + 1
+    document["registry_sha256"] = _document_sha256(document)
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     final = root / REGISTRY_FILENAME
@@ -228,6 +234,22 @@ def claim_holdout(
             interval_start_utc=interval_start_utc,
             interval_end_utc=interval_end_utc,
         )
+        # A retried claim by the exact experiment/plan/target is recovery, not
+        # reuse.  Return the original entry without mutating the registry.
+        for entry in document["entries"]:
+            if (entry["dataset_fingerprint"] == dataset_fingerprint
+                    and entry["interval_start_utc"] == normalize_utc_timestamp(interval_start_utc)
+                    and entry["interval_end_utc"] == normalize_utc_timestamp(interval_end_utc)
+                    and entry.get("experiment_id") == experiment_id
+                    and entry.get("plan_sha256") == plan_sha256
+                    and entry.get("target_contract_sha256") == target_contract_sha256
+                    and entry.get("hypothesis_family") == hypothesis_family
+                    and entry.get("status") == SEALED_FOR_EXPERIMENT):
+                return {"holdout_id": entry["holdout_id"], "status": entry["status"],
+                        "reuse_kind": "none", "overlapping_holdout_ids": [],
+                        "promotion_blocked": False, "idempotent": True,
+                        "claim_token": entry["claim_token"],
+                        "registry_revision": entry["claim_revision"]}
         blocking = [item for item in overlaps if item["status"] != UNUSED]
         unused_exact = [item for item in overlaps
                         if item["status"] == UNUSED and item["overlap_kind"] == "exact"]
@@ -240,6 +262,14 @@ def claim_holdout(
                 f"fingerprint is not untouched: {details}. Reuse is only allowed as an "
                 f"explicitly declared forensic reuse, which blocks promotion.")
         status = FORENSIC_REUSE if (blocking and declare_forensic_reuse) else SEALED_FOR_EXPERIMENT
+        claim_revision = int(document.get("revision", 0)) + 1
+        previous_registry_sha256 = document["registry_sha256"]
+        token_payload = {
+            "experiment_id": experiment_id, "plan_sha256": plan_sha256,
+            "claim_revision": claim_revision, "dataset_fingerprint": dataset_fingerprint,
+            "claimed_at_utc": claimed_at_utc,
+            "previous_registry_sha256": previous_registry_sha256,
+        }
         if unused_exact and status == SEALED_FOR_EXPERIMENT:
             holdout_id = unused_exact[0]["holdout_id"]
             for entry in document["entries"]:
@@ -248,6 +278,11 @@ def claim_holdout(
                     entry["experiment_id"] = experiment_id
                     entry["plan_sha256"] = plan_sha256
                     entry["claimed_at_utc"] = claimed_at_utc
+                    entry["claim_origin"] = "pre_registered"
+                    entry["claim_revision"] = claim_revision
+                    entry["previous_registry_sha256"] = previous_registry_sha256
+                    entry["claim_token"] = sha256_payload(
+                        dict(token_payload, holdout_id=holdout_id))
                     break
         else:
             # Deterministic identity: the same claim by the same experiment on
@@ -256,7 +291,7 @@ def claim_holdout(
                 uuid.NAMESPACE_URL,
                 f"edge-tribunal-holdout:{dataset_fingerprint}:"
                 f"{interval_start_utc}:{interval_end_utc}:{experiment_id}"))
-            document["entries"].append({
+            new_entry = {
                 "holdout_id": holdout_id,
                 "dataset_fingerprint": dataset_fingerprint,
                 "universe": sorted(universe),
@@ -269,8 +304,16 @@ def claim_holdout(
                 "experiment_id": experiment_id,
                 "plan_sha256": plan_sha256,
                 "claimed_at_utc": claimed_at_utc,
-            })
+                "claim_origin": "created",
+                "claim_revision": claim_revision,
+                "previous_registry_sha256": previous_registry_sha256,
+            }
+            new_entry["claim_token"] = sha256_payload(
+                dict(token_payload, holdout_id=holdout_id))
+            document["entries"].append(new_entry)
         _save_registry(root, document)
+        claimed_entry = next(entry for entry in document["entries"]
+                             if entry["holdout_id"] == holdout_id)
     return {
         "holdout_id": holdout_id,
         "status": status,
@@ -278,7 +321,36 @@ def claim_holdout(
                        else "partial") if blocking else "none",
         "overlapping_holdout_ids": [item["holdout_id"] for item in overlaps],
         "promotion_blocked": status == FORENSIC_REUSE,
+        "idempotent": False,
+        "claim_token": claimed_entry["claim_token"],
+        "registry_revision": claimed_entry["claim_revision"],
     }
+
+
+def release_claim_if_owned(root: Path, *, holdout_id: str, experiment_id: str,
+                           plan_sha256: str) -> bool:
+    """Remove an unconsumed reservation only when ownership matches exactly."""
+    experiment_id = normalize_uuid(experiment_id)
+    with RegistryLock(root):
+        document = load_registry(root)
+        for index, entry in enumerate(document["entries"]):
+            if entry["holdout_id"] != holdout_id:
+                continue
+            if (entry.get("experiment_id") != experiment_id
+                    or entry.get("plan_sha256") != plan_sha256
+                    or entry.get("status") != SEALED_FOR_EXPERIMENT):
+                return False
+            if entry.get("claim_origin") == "pre_registered":
+                entry.update({"status": UNUSED, "experiment_id": None,
+                              "plan_sha256": None, "claimed_at_utc": None})
+                for key in ("claim_origin", "claim_revision", "claim_token",
+                            "previous_registry_sha256"):
+                    entry.pop(key, None)
+            else:
+                del document["entries"][index]
+            _save_registry(root, document)
+            return True
+    return False
 
 
 def _update_status(root: Path, holdout_id: str, *, expected: tuple[str, ...],
@@ -300,6 +372,27 @@ def consume_holdout(root: Path, holdout_id: str) -> None:
     """Mark a claimed holdout CONSUMED when its experiment's verdict issues."""
     _update_status(root, holdout_id, expected=(SEALED_FOR_EXPERIMENT, FORENSIC_REUSE),
                    new_status=CONSUMED)
+
+
+def consume_holdout_idempotent(root: Path, holdout_id: str) -> dict[str, Any]:
+    """Consume once and return a registry-bound receipt; retries are harmless."""
+    with RegistryLock(root):
+        document = load_registry(root)
+        for entry in document["entries"]:
+            if entry["holdout_id"] != holdout_id:
+                continue
+            previous = entry["status"]
+            if previous not in (SEALED_FOR_EXPERIMENT, FORENSIC_REUSE, CONSUMED):
+                raise TribunalError(f"holdout {holdout_id} cannot be consumed from {previous}")
+            if previous != CONSUMED:
+                entry["status"] = CONSUMED
+                _save_registry(root, document)
+            receipt = {"holdout_id": holdout_id, "previous_status": previous,
+                       "final_status": CONSUMED, "registry_revision": document.get("revision", 0),
+                       "registry_sha256": document["registry_sha256"]}
+            receipt["receipt_sha256"] = sha256_payload(receipt)
+            return receipt
+    raise TribunalError(f"holdout {holdout_id} is not registered")
 
 
 def invalidate_holdout(root: Path, holdout_id: str) -> None:

@@ -1,10 +1,9 @@
-﻿<div align="center">
+<div align="center">
 
 # Azar · FX Dynamics Research Simulator
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](https://github.com/Aphelion-Research/Azar/actions)
-[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://aphelion-research.github.io/Azar)
+[![CI](https://github.com/MatinDeevv/simple/actions/workflows/ci.yml/badge.svg)](https://github.com/MatinDeevv/simple/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 [![Contributors](https://img.shields.io/badge/contributors-welcome-orange.svg)](CONTRIBUTING.md)
 [![Research](https://img.shields.io/badge/status-research-purple.svg)](docs/research-run-manifest.md)
@@ -145,6 +144,7 @@ engine/                 # Core simulation package
 ├── core/               # State schema, contracts, and utilities
 ├── data/               # Ingestion, canonical manifest, and replay
 ├── evaluation/         # Holdout protocol and diagnostics
+├── experiments/        # Edge Tribunal preregistration and verdict governance
 ├── models/             # Classical dynamics, stat-arb, legal-event models
 ├── quantum/            # Frozen quantum research modules
 ├── tools/              # Repository verification helpers
@@ -294,7 +294,7 @@ If you use Azar in academic work, please cite:
   title = {Azar: FX Dynamics Research Simulator},
   author = {Aphelion Research},
   year = {2026},
-  url = {https://github.com/Aphelion-Research/Azar},
+  url = {https://github.com/MatinDeevv/simple},
   note = {Research simulator; not a trading system}
 }
 ```
