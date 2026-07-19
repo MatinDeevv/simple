@@ -1,0 +1,79 @@
+{
+  "schema_version": "edge-tribunal-dataset-binding-v1",
+  "title": "Edge Tribunal dataset binding (engine/experiments/dataset_binding.py)",
+  "type": "object",
+  "required": [
+    "binding_version", "binding_id", "experiment_id", "plan_sha256", "seal_sha256",
+    "dataset_manifest_sha256", "dataset_name", "provenance", "files",
+    "row_count_total", "minimum_timestamp_utc", "maximum_timestamp_utc",
+    "pair_scope", "frequency", "timestamp_timezone", "required_columns",
+    "missing_row_count", "duplicate_row_count", "segment_count", "gap_count",
+    "price_side", "execution_data", "execution_data_complete", "holdout_interval",
+    "prior_inspection_cutoff_utc", "untouched_claim", "untouched_evidence",
+    "holdout_id", "holdout_claim_status", "holdout_reuse_kind",
+    "promotion_blocked_by_holdout", "maximum_verdict_after_binding",
+    "maximum_evidence_level", "bound_at_utc", "binding_sha256"
+  ],
+  "properties": {
+    "binding_version": {"type": "string", "enum": ["edge-tribunal-dataset-binding-v1"]},
+    "binding_id": {"type": "string"},
+    "experiment_id": {"type": "string"},
+    "plan_sha256": {"type": "string"},
+    "seal_sha256": {"type": "string"},
+    "dataset_manifest_sha256": {"type": "string"},
+    "dataset_name": {"type": "string"},
+    "provenance": {"type": "string"},
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["logical_path", "sha256", "row_count"],
+        "properties": {
+          "logical_path": {"type": "string"},
+          "sha256": {"type": "string"},
+          "row_count": {"type": "integer"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "row_count_total": {"type": "integer"},
+    "minimum_timestamp_utc": {"type": "string"},
+    "maximum_timestamp_utc": {"type": "string"},
+    "pair_scope": {"type": "array", "items": {"type": "string"}},
+    "frequency": {"type": "string"},
+    "timestamp_timezone": {"type": "string", "enum": ["UTC"]},
+    "required_columns": {"type": "array", "items": {"type": "string"}},
+    "missing_row_count": {"type": "integer"},
+    "duplicate_row_count": {"type": "integer"},
+    "segment_count": {"type": "integer"},
+    "gap_count": {"type": "integer"},
+    "price_side": {"type": "string"},
+    "execution_data": {"type": "object"},
+    "execution_data_complete": {"type": "boolean"},
+    "holdout_interval": {
+      "type": "object",
+      "required": ["start_utc", "end_utc"],
+      "properties": {
+        "start_utc": {"type": "string"},
+        "end_utc": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "prior_inspection_cutoff_utc": {"type": "string"},
+    "untouched_claim": {"type": "boolean"},
+    "untouched_evidence": {"type": "string"},
+    "holdout_id": {"type": "string"},
+    "holdout_claim_status": {"type": "string",
+                             "enum": ["UNUSED", "SEALED_FOR_EXPERIMENT", "CONSUMED",
+                                      "FORENSIC_REUSE", "INVALIDATED"]},
+    "holdout_reuse_kind": {"type": "string", "enum": ["none", "exact", "partial"]},
+    "promotion_blocked_by_holdout": {"type": "boolean"},
+    "maximum_verdict_after_binding": {"type": "string",
+                                      "enum": ["RESEARCH_ONLY", "FORWARD_TEST_ELIGIBLE",
+                                               "PAPER_FORWARD_TEST_PASSED"]},
+    "maximum_evidence_level": {"type": "string"},
+    "bound_at_utc": {"type": "string"},
+    "binding_sha256": {"type": "string"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,40 @@
+{
+  "dataset_name": "synthetic-fx-bid-1min-fixture",
+  "provenance": "deterministic synthetic fixture written by hand for the Edge Tribunal walkthrough; no market data file was read to produce it",
+  "files": [
+    {
+      "logical_path": "data/synthetic/eurusd-1min.parquet",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "row_count": 500000
+    },
+    {
+      "logical_path": "data/synthetic/gbpusd-1min.parquet",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "row_count": 500000
+    }
+  ],
+  "minimum_timestamp_utc": "2020-01-01T00:00:00+00:00",
+  "maximum_timestamp_utc": "2025-01-01T00:00:00+00:00",
+  "pair_scope": ["EURUSD", "GBPUSD"],
+  "frequency": "1min",
+  "timestamp_timezone": "UTC",
+  "columns": ["timestamp_utc", "close_bid", "volume"],
+  "missing_row_count": 12,
+  "duplicate_row_count": 0,
+  "segment_count": 9,
+  "gap_count": 12,
+  "price_side": "BID",
+  "prior_inspection_cutoff_utc": "2024-06-30T00:00:00+00:00",
+  "execution_data": {
+    "ask_available": false,
+    "spread_available": false,
+    "fill_available": false,
+    "commission_available": false,
+    "latency_available": false,
+    "impact_available": false,
+    "contract_notional_available": false,
+    "conversion_price_available": false
+  },
+  "untouched_claim": true,
+  "untouched_evidence": "synthetic interval never presented to any prior experiment; enforced by the holdout registry in this walkthrough"
+}

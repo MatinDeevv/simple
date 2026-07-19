@@ -1,0 +1,32 @@
+{
+  "schema_version": "edge-tribunal-seal-v1",
+  "title": "Edge Tribunal seal artifact (engine/experiments/edge_tribunal.py)",
+  "type": "object",
+  "required": [
+    "seal_version", "experiment_id", "plan_sha256", "sealed_at_utc",
+    "code_commit_sha", "configuration_sha256", "source_file_sha256",
+    "researcher", "parent_experiment_id", "amendment",
+    "maximum_permitted_verdict", "state_before", "state_after",
+    "previous_audit_event_sha256", "seal_sha256"
+  ],
+  "properties": {
+    "seal_version": {"type": "string", "enum": ["edge-tribunal-seal-v1"]},
+    "experiment_id": {"type": "string"},
+    "plan_sha256": {"type": "string"},
+    "sealed_at_utc": {"type": "string"},
+    "code_commit_sha": {"type": "string"},
+    "configuration_sha256": {"type": "string"},
+    "source_file_sha256": {"type": "object"},
+    "researcher": {"type": "string"},
+    "parent_experiment_id": {"type": ["string", "null"]},
+    "amendment": {"type": "boolean"},
+    "maximum_permitted_verdict": {"type": "string",
+                                  "enum": ["RESEARCH_ONLY", "FORWARD_TEST_ELIGIBLE",
+                                           "PAPER_FORWARD_TEST_PASSED"]},
+    "state_before": {"type": "string", "enum": ["DRAFT"]},
+    "state_after": {"type": "string", "enum": ["SEALED"]},
+    "previous_audit_event_sha256": {"type": "string"},
+    "seal_sha256": {"type": "string"}
+  },
+  "additionalProperties": false
+}
