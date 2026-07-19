@@ -1,0 +1,222 @@
+{
+  "plan_version": "edge-tribunal-plan-v1",
+  "identity": {
+    "experiment_id": "00000000-0000-4000-8000-000000000001",
+    "title": "Synthetic walkthrough: conditional three-class basket hypothesis",
+    "researcher": "synthetic-fixture",
+    "created_at_utc": "2026-01-02T00:00:00+00:00",
+    "parent_experiment_id": null,
+    "amendment_reason": null
+  },
+  "hypothesis": {
+    "statement": "The frozen stat-arb v0.2.1 conditional three-class basket probabilities are better calibrated than the train-only conditional comparator on untouched data.",
+    "economic_mechanism": "Temporary cross-pair dislocations revert within the holding horizon while the basket's hedged structure suppresses common-mode drift.",
+    "expected_direction": "positive Brier and log-loss improvement over the train-only conditional comparator",
+    "expected_holding_horizon": "30 one-minute steps",
+    "expected_failure_mode": "regime break in cross-pair coupling erases the conditional structure",
+    "why_effect_exists": "liquidity provision is slow to reprice correlated pairs after idiosyncratic shocks",
+    "why_effect_might_disappear": "faster arbitrageurs, structural correlation change, or overfit conditional cells"
+  },
+  "code_contract": {
+    "repository": "MatinDeevv/simple",
+    "commit_sha": "199408ffc19edc791e60f1c2defcc86f4bebd973",
+    "git_tree_sha": null,
+    "package_version": "0.1.0",
+    "model_contract_version": "stat-arb-v0.2.1",
+    "source_file_sha256": {
+      "engine/models/statistical/stat_arb.py": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "configuration_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "evidence_producer_command": "python -m engine.models.statistical.stat_arb --emit-tribunal-evidence",
+    "allowed_implementation_files": ["engine/models/statistical/stat_arb.py"]
+  },
+  "data_contract": {
+    "universe": ["EURUSD", "GBPUSD"],
+    "pair_order": ["EURUSD", "GBPUSD"],
+    "frequency": "1min",
+    "price_side": "BID",
+    "required_columns": ["timestamp_utc", "close_bid"],
+    "timestamp_timezone": "UTC",
+    "expected_observation_interval_seconds": 60,
+    "minimum_start_utc": "2020-01-01T00:00:00+00:00",
+    "maximum_permitted_inspection_utc": "2024-06-30T00:00:00+00:00",
+    "untouched_evaluation_start_utc": "2024-07-01T00:00:00+00:00",
+    "untouched_evaluation_end_utc": "2024-12-31T00:00:00+00:00",
+    "warmup_policy": "first 390 observed bars per segment are warmup-only",
+    "missing_bar_policy": "missing bars are never forward-filled; gaps reset state",
+    "duplicate_row_policy": "duplicate timestamps are rejected at ingestion",
+    "gap_reset_policy": "gaps longer than 30 minutes start a new causal segment",
+    "dataset_provenance_requirements": ["synthetic fixture only; no market data inspected"]
+  },
+  "target_contract": {
+    "target_name": "basket_three_class_30step",
+    "class_order": ["negative", "neutral", "positive"],
+    "target_horizon_steps": 30,
+    "neutral_zone_definition": "absolute basket move below 0.5 units of rolling scale",
+    "target_availability_rules": "a target exists only when all 30 future steps are observed within one causal segment",
+    "leakage_prohibitions": ["no future bars in features", "no OOS labels in comparator fitting"]
+  },
+  "primary_comparator": {
+    "identity": "train_only_conditional_three_class",
+    "fallback_hierarchy": ["regime_conditional", "global_train_prior"],
+    "smoothing_alpha": 1.0,
+    "minimum_cell_count": 30,
+    "train_only": true
+  },
+  "secondary_comparators": [
+    {"comparator_id": "global-prior", "kind": "global_train_prior"},
+    {"comparator_id": "placebo-shuffle", "kind": "time_shuffled_label_placebo"},
+    {"comparator_id": "sign-flip", "kind": "sign_flipped_control"},
+    {"comparator_id": "no-regime", "kind": "no_regime_ablation"},
+    {"comparator_id": "static-factor", "kind": "static_factor_comparator"},
+    {"comparator_id": "persistence", "kind": "persistence_comparator"}
+  ],
+  "primary_metrics": ["multiclass_brier", "multiclass_log_loss"],
+  "secondary_metrics": [
+    "calibration_error", "directional_brier", "directional_log_loss",
+    "class_balance", "probability_sharpness", "target_cluster_count",
+    "signal_episode_count"
+  ],
+  "uncertainty_contract": {
+    "bootstrap_method": "moving_block",
+    "block_units": "minutes",
+    "block_sizes": [30, 120, 390],
+    "replicate_count": 2000,
+    "random_seed": 7,
+    "one_sided_confidence": 0.95,
+    "two_sided_confidence": 0.9,
+    "minimum_independent_target_clusters": 30,
+    "minimum_causal_segments": 5,
+    "minimum_oos_rows": 500
+  },
+  "entry_policy_contract": {
+    "primary_population": "independent_research_entries",
+    "sensitivity_populations": [
+      "independent_research_entries",
+      "first_entry_per_signal_episode",
+      "non_overlapping_global",
+      "non_overlapping_component",
+      "non_overlapping_basket",
+      "one_representative_per_target_cluster"
+    ],
+    "split_boundary_policies": ["reset_at_oos_start", "carry_chronological_state_into_oos"],
+    "target_cluster_representative_rule": "earliest accepted entry per target cluster"
+  },
+  "robustness_contract": {
+    "required_time_slices": ["whole_oos", "first_half", "second_half"],
+    "required_regime_slices": ["all", "low", "high"],
+    "required_policy_slices": [
+      "independent_research_entries",
+      "first_entry_per_signal_episode",
+      "non_overlapping_global",
+      "non_overlapping_component",
+      "non_overlapping_basket",
+      "one_representative_per_target_cluster"
+    ],
+    "required_block_lengths": [30, 120, 390],
+    "required_perturbations": [
+      "baseline", "delay_entry_1", "delay_entry_2", "probability_rounding",
+      "missing_bar_injection", "reduced_population", "fallback_only_stress"
+    ],
+    "mandatory_cells": [
+      "policy=independent_research_entries|boundary=reset_at_oos_start|block=120",
+      "policy=first_entry_per_signal_episode|boundary=reset_at_oos_start|block=120",
+      "policy=non_overlapping_global|boundary=reset_at_oos_start|block=120",
+      "policy=non_overlapping_component|boundary=reset_at_oos_start|block=120",
+      "policy=non_overlapping_basket|boundary=reset_at_oos_start|block=120",
+      "policy=one_representative_per_target_cluster|boundary=reset_at_oos_start|block=120"
+    ],
+    "minimum_pass_proportion": 0.7,
+    "insufficient_allowed_cells": [],
+    "minimum_samples_per_cell": 50,
+    "missing_cell_policy": "count_in_denominator",
+    "max_missing_data_sensitivity": 0.5
+  },
+  "concentration_limits": {
+    "max_single_signal_episode_fraction": 0.2,
+    "max_single_target_cluster_fraction": 0.2,
+    "max_single_causal_segment_fraction": 0.5,
+    "max_single_day_fraction": 0.3,
+    "max_single_component_fraction": 0.6,
+    "max_single_regime_fraction": 0.8,
+    "max_single_fallback_tier_fraction": 0.9,
+    "small_sample_rows_threshold": 200
+  },
+  "multiple_testing_contract": {
+    "family_id": "statarb-basket-v021-family",
+    "family_size": 1,
+    "correction_method": "NONE_SINGLE_PRIMARY",
+    "familywise_alpha": 0.05,
+    "primary_hypothesis_index": 0,
+    "single_registered_primary": true,
+    "secondary_metric_treatment": "exploratory_only",
+    "registered_sibling_experiment_ids": []
+  },
+  "acceptance_gates": [
+    {"gate_id": "primary_brier_improvement", "category": "statistical",
+     "description": "model must beat the primary comparator on multiclass Brier",
+     "metric_path": "primary_model.brier_improvement", "comparison": ">=",
+     "threshold": 0.0005, "required": true, "on_insufficient": "inconclusive"},
+    {"gate_id": "primary_log_loss_improvement", "category": "statistical",
+     "description": "model must beat the primary comparator on multiclass log loss",
+     "metric_path": "primary_model.log_loss_improvement", "comparison": ">=",
+     "threshold": 0.001, "required": true, "on_insufficient": "inconclusive"},
+    {"gate_id": "primary_brier_improvement_lower_bound", "category": "statistical",
+     "description": "one-sided lower confidence bound of Brier improvement must be positive",
+     "metric_path": "primary_model.brier_improvement_lower_bound_one_sided",
+     "comparison": ">", "threshold": 0.0, "required": true, "on_insufficient": "inconclusive"},
+    {"gate_id": "primary_log_loss_improvement_lower_bound", "category": "statistical",
+     "description": "one-sided lower confidence bound of log-loss improvement must be positive",
+     "metric_path": "primary_model.log_loss_improvement_lower_bound_one_sided",
+     "comparison": ">", "threshold": 0.0, "required": true, "on_insufficient": "inconclusive"},
+    {"gate_id": "placebo_shuffled_labels_must_fail", "category": "negative_control",
+     "description": "the time-shuffled label placebo must not beat the comparator",
+     "metric_path": "negative_controls.time_shuffled_label_placebo.brier_improvement",
+     "comparison": "<=", "threshold": 0.0, "required": true, "on_insufficient": "fail"},
+    {"gate_id": "sign_flip_control_must_fail", "category": "negative_control",
+     "description": "the sign-flipped control must not beat the comparator",
+     "metric_path": "negative_controls.sign_flipped_control.brier_improvement",
+     "comparison": "<=", "threshold": 0.0, "required": true, "on_insufficient": "fail"},
+    {"gate_id": "power_min_oos_rows", "category": "power",
+     "description": "minimum OOS rows for interpretable evidence",
+     "metric_path": "population.oos_rows", "comparison": ">=",
+     "threshold": 500, "required": true, "on_insufficient": "inconclusive"},
+    {"gate_id": "power_min_target_clusters", "category": "power",
+     "description": "minimum independent target clusters",
+     "metric_path": "population.target_clusters", "comparison": ">=",
+     "threshold": 30, "required": true, "on_insufficient": "inconclusive"},
+    {"gate_id": "power_min_causal_segments", "category": "power",
+     "description": "minimum causal segments",
+     "metric_path": "population.causal_segments", "comparison": ">=",
+     "threshold": 5, "required": true, "on_insufficient": "inconclusive"},
+    {"gate_id": "concentration_single_episode", "category": "concentration",
+     "description": "no single signal episode may dominate accepted OOS rows",
+     "metric_path": "concentration.largest_signal_episode_fraction", "comparison": "<=",
+     "threshold": 0.2, "required": true, "on_insufficient": "inconclusive"},
+    {"gate_id": "data_quality_target_availability", "category": "data_quality",
+     "description": "targets must be available for the vast majority of accepted rows",
+     "metric_path": "data_quality.target_availability_rate", "comparison": ">=",
+     "threshold": 0.9, "required": true, "on_insufficient": "invalid"},
+    {"gate_id": "robustness_pass_ratio_gate", "category": "robustness",
+     "description": "preregistered share of robustness cells must pass",
+     "metric_path": "derived.robustness_pass_ratio", "comparison": ">=",
+     "threshold": 0.7, "required": true, "on_insufficient": "inconclusive"},
+    {"gate_id": "multiplicity_adjusted_primary_gate", "category": "statistical",
+     "description": "primary hypothesis must survive the preregistered multiplicity correction",
+     "metric_path": "derived.multiplicity_primary_rejected", "comparison": ">=",
+     "threshold": 1, "required": true, "on_insufficient": "inconclusive"}
+  ],
+  "automatic_rejection_conditions": [
+    "code_mismatch", "configuration_mismatch", "dataset_mismatch", "holdout_reuse",
+    "missing_mandatory_comparator", "missing_mandatory_metric", "invalid_probabilities",
+    "non_finite_values", "insufficient_target_availability", "incomplete_audit_chain",
+    "unsealed_plan", "evidence_produced_before_dataset_binding",
+    "manual_deletion_of_registered_failures"
+  ],
+  "promotion_ceiling": {
+    "maximum_verdict": "FORWARD_TEST_ELIGIBLE",
+    "explanation": "The dataset is one-minute BID closes with no ask, spread, fill, commission, latency, impact, notional, or conversion data; execution realism is unobtainable, so historical evidence can at most earn eligibility for a preregistered paper forward test.",
+    "execution_data_required": true,
+    "forward_test_required": true
+  }
+}

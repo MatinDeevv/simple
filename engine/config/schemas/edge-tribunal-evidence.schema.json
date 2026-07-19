@@ -1,0 +1,38 @@
+{
+  "schema_version": "edge-tribunal-evidence-v1",
+  "title": "Edge Tribunal evidence bundle (engine/experiments/evidence.py)",
+  "type": "object",
+  "required": [
+    "evidence_version", "experiment", "producer", "dataset", "population",
+    "primary_model", "primary_comparator", "negative_controls", "robustness",
+    "concentration", "data_quality", "execution_data", "multiplicity", "artifacts"
+  ],
+  "properties": {
+    "evidence_version": {"type": "string", "enum": ["edge-tribunal-evidence-v1"]},
+    "experiment": {
+      "type": "object",
+      "required": ["experiment_id", "plan_sha256", "seal_sha256", "binding_sha256"],
+      "properties": {
+        "experiment_id": {"type": "string"},
+        "plan_sha256": {"type": "string"},
+        "seal_sha256": {"type": "string"},
+        "binding_sha256": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "producer": {"type": "object"},
+    "dataset": {"type": "object"},
+    "population": {"type": "object"},
+    "primary_model": {"type": "object"},
+    "primary_comparator": {"type": "object"},
+    "negative_controls": {"type": "object"},
+    "robustness": {"type": "object"},
+    "concentration": {"type": "object"},
+    "data_quality": {"type": "object"},
+    "execution_data": {"type": "object"},
+    "multiplicity": {"type": "object"},
+    "artifacts": {"type": "object"},
+    "evidence_sha256": {"type": "string"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,422 @@
+{
+  "artifacts": {
+    "artifact_sha256": {
+      "artifacts/runs/synthetic-example/manifest.json": "7777777777777777777777777777777777777777777777777777777777777777",
+      "artifacts/runs/synthetic-example/summary.json": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    "audit_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+    "manifest_path": "artifacts/runs/synthetic-example/manifest.json",
+    "summary_path": "artifacts/runs/synthetic-example/summary.json",
+    "test_evidence_sha256": {
+      "pytest-full-suite": "9999999999999999999999999999999999999999999999999999999999999999"
+    }
+  },
+  "concentration": {
+    "largest_causal_segment_fraction": 0.3,
+    "largest_component_fraction": 0.4,
+    "largest_day_fraction": 0.12,
+    "largest_fallback_tier_fraction": 0.85,
+    "largest_regime_fraction": 0.55,
+    "largest_signal_episode_fraction": 0.08,
+    "largest_target_cluster_fraction": 0.05
+  },
+  "data_quality": {
+    "duplicate_rows": 0,
+    "gap_count": 12,
+    "invalid_price_count": 0,
+    "missing_rows": 12,
+    "probability_validity_confirmed": true,
+    "schema_validation_passed": true,
+    "target_availability_rate": 0.97
+  },
+  "dataset": {
+    "dataset_binding_sha256": "b96e0beaa15059513553588bedd45082907c6b82d2b12ac3f4d2a008fe31a9d2",
+    "dataset_file_sha256": {
+      "data/synthetic/eurusd-1min.parquet": "3333333333333333333333333333333333333333333333333333333333333333",
+      "data/synthetic/gbpusd-1min.parquet": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "holdout_interval": {
+      "end_utc": "2024-12-31T00:00:00+00:00",
+      "start_utc": "2024-07-01T00:00:00+00:00"
+    },
+    "row_count": 1000000,
+    "valid_target_count": 950000
+  },
+  "evidence_sha256": "c6fc91fb1e7f87a54b3d651358dafb03342b2f7c02b4d932ea199f00989836e3",
+  "evidence_version": "edge-tribunal-evidence-v1",
+  "execution_data": {
+    "ask_available": false,
+    "commission_available": false,
+    "contract_notional_available": false,
+    "conversion_price_available": false,
+    "fill_available": false,
+    "impact_available": false,
+    "latency_available": false,
+    "spread_available": false
+  },
+  "experiment": {
+    "binding_sha256": "b96e0beaa15059513553588bedd45082907c6b82d2b12ac3f4d2a008fe31a9d2",
+    "experiment_id": "00000000-0000-4000-8000-000000000001",
+    "plan_sha256": "a98da498f35a09981c2fbebe3814478d855d6e358dee439add27c17b6c307661",
+    "seal_sha256": "8bca4da8eea7809a82acbc68834b0d9cb50f03440b474a46ed2e96a6bc5374aa"
+  },
+  "multiplicity": {
+    "family_id": "statarb-basket-v021-family",
+    "family_size": 1,
+    "hypothesis_ids": [
+      "h1-basket-conditional-improvement"
+    ],
+    "p_values": [
+      0.011
+    ],
+    "primary_hypothesis_index": 0
+  },
+  "negative_controls": {
+    "global_train_prior": {
+      "brier_improvement": 0.006,
+      "log_loss_improvement": 0.011,
+      "status": "behaved_as_required"
+    },
+    "no_regime_ablation": {
+      "brier_improvement": -0.0011,
+      "log_loss_improvement": -0.0019,
+      "status": "behaved_as_required"
+    },
+    "persistence_comparator": {
+      "brier_improvement": -0.0021,
+      "log_loss_improvement": -0.0038,
+      "status": "behaved_as_required"
+    },
+    "sign_flipped_control": {
+      "brier_improvement": -0.0042,
+      "log_loss_improvement": -0.0087,
+      "status": "behaved_as_required"
+    },
+    "static_factor_comparator": {
+      "brier_improvement": -0.0009,
+      "log_loss_improvement": -0.0014,
+      "status": "behaved_as_required"
+    },
+    "time_shuffled_label_placebo": {
+      "brier_improvement": -0.0031,
+      "log_loss_improvement": -0.0064,
+      "status": "behaved_as_required"
+    }
+  },
+  "population": {
+    "accepted_rows": 1200,
+    "causal_segments": 8,
+    "class_counts": {
+      "negative": 400,
+      "neutral": 420,
+      "positive": 380
+    },
+    "oos_rows": 2000,
+    "policy_counts": {
+      "first_entry_per_signal_episode": {
+        "oos_accepted": 900,
+        "train_accepted": 5000
+      },
+      "independent_research_entries": {
+        "oos_accepted": 900,
+        "train_accepted": 5000
+      },
+      "non_overlapping_basket": {
+        "oos_accepted": 900,
+        "train_accepted": 5000
+      },
+      "non_overlapping_component": {
+        "oos_accepted": 900,
+        "train_accepted": 5000
+      },
+      "non_overlapping_global": {
+        "oos_accepted": 900,
+        "train_accepted": 5000
+      },
+      "one_representative_per_target_cluster": {
+        "oos_accepted": 900,
+        "train_accepted": 5000
+      }
+    },
+    "signal_episodes": 300,
+    "target_clusters": 260,
+    "training_rows": 8000
+  },
+  "primary_comparator": {
+    "configuration": {
+      "minimum_cell_count": 30,
+      "smoothing_alpha": 1.0
+    },
+    "fallback_tier_counts": {
+      "global_train_prior": 100,
+      "regime_conditional": 1100
+    },
+    "identity": "train_only_conditional_three_class",
+    "multiclass_brier": 0.616,
+    "multiclass_log_loss": 1.029,
+    "train_only_confirmed": true
+  },
+  "primary_model": {
+    "brier_improvement": 0.004,
+    "brier_improvement_lower_bound_one_sided": 0.001,
+    "brier_improvement_lower_bound_two_sided": 0.0008,
+    "brier_improvement_upper_bound_two_sided": 0.0072,
+    "calibration_error": 0.031,
+    "log_loss_improvement": 0.008,
+    "log_loss_improvement_lower_bound_one_sided": 0.002,
+    "log_loss_improvement_lower_bound_two_sided": 0.0015,
+    "log_loss_improvement_upper_bound_two_sided": 0.014,
+    "multiclass_brier": 0.612,
+    "multiclass_log_loss": 1.021,
+    "probability_summary": {
+      "max_probability": 0.93,
+      "mean_row_sum": 1.0,
+      "min_probability": 0.02,
+      "rows": 1200
+    }
+  },
+  "producer": {
+    "code_commit_sha": "199408ffc19edc791e60f1c2defcc86f4bebd973",
+    "configuration_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "dependency_snapshot_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "execution_command": "python -m engine.models.statistical.stat_arb --emit-tribunal-evidence",
+    "model_contract_version": "stat-arb-v0.2.1",
+    "produced_at_utc": "2026-01-02T00:12:00+00:00",
+    "python_version": "3.11.9",
+    "random_seeds": {
+      "bootstrap": 7
+    },
+    "source_file_sha256": {
+      "engine/models/statistical/stat_arb.py": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  "robustness": {
+    "cells": [
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=independent_research_entries|boundary=reset_at_oos_start|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "independent_research_entries",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "reset_at_oos_start",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=independent_research_entries|boundary=carry_chronological_state_into_oos|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "independent_research_entries",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "carry_chronological_state_into_oos",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=first_entry_per_signal_episode|boundary=reset_at_oos_start|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "first_entry_per_signal_episode",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "reset_at_oos_start",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=first_entry_per_signal_episode|boundary=carry_chronological_state_into_oos|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "first_entry_per_signal_episode",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "carry_chronological_state_into_oos",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=non_overlapping_global|boundary=reset_at_oos_start|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "non_overlapping_global",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "reset_at_oos_start",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=non_overlapping_global|boundary=carry_chronological_state_into_oos|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "non_overlapping_global",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "carry_chronological_state_into_oos",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=non_overlapping_component|boundary=reset_at_oos_start|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "non_overlapping_component",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "reset_at_oos_start",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=non_overlapping_component|boundary=carry_chronological_state_into_oos|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "non_overlapping_component",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "carry_chronological_state_into_oos",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=non_overlapping_basket|boundary=reset_at_oos_start|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "non_overlapping_basket",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "reset_at_oos_start",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=non_overlapping_basket|boundary=carry_chronological_state_into_oos|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "non_overlapping_basket",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "carry_chronological_state_into_oos",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=one_representative_per_target_cluster|boundary=reset_at_oos_start|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "one_representative_per_target_cluster",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "reset_at_oos_start",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.003,
+        "cell_id": "policy=one_representative_per_target_cluster|boundary=carry_chronological_state_into_oos|block=120",
+        "dimensions": {
+          "block_length": 120,
+          "entry_policy": "one_representative_per_target_cluster",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "carry_chronological_state_into_oos",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.006,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.0028,
+        "cell_id": "policy=independent_research_entries|boundary=reset_at_oos_start|block=30",
+        "dimensions": {
+          "block_length": 30,
+          "entry_policy": "independent_research_entries",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "reset_at_oos_start",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.0055,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      },
+      {
+        "brier_improvement": 0.0028,
+        "cell_id": "policy=independent_research_entries|boundary=reset_at_oos_start|block=390",
+        "dimensions": {
+          "block_length": 390,
+          "entry_policy": "independent_research_entries",
+          "perturbation": "baseline",
+          "regime": "all",
+          "split_boundary": "reset_at_oos_start",
+          "time_slice": "whole_oos"
+        },
+        "log_loss_improvement": 0.0055,
+        "sample_count": 300,
+        "status": "scored",
+        "target_clusters": 120
+      }
+    ],
+    "missing_data_sensitivity": 0.12
+  }
+}

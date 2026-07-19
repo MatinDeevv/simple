@@ -1,0 +1,24 @@
+{
+  "scenarios": [
+    {
+      "name": "invalid-configuration-mismatch",
+      "expected_verdict": "INVALID_EXPERIMENT",
+      "mutation": "tamper_configuration_after_recording"
+    },
+    {
+      "name": "rejected-comparator-loss",
+      "expected_verdict": "REJECTED",
+      "mutation": "primary_model_loses"
+    },
+    {
+      "name": "inconclusive-insufficient-clusters",
+      "expected_verdict": "INCONCLUSIVE",
+      "mutation": "insufficient_target_clusters"
+    },
+    {
+      "name": "forward-test-eligible",
+      "expected_verdict": "FORWARD_TEST_ELIGIBLE",
+      "mutation": "none"
+    }
+  ]
+}

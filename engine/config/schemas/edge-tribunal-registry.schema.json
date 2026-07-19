@@ -1,0 +1,40 @@
+{
+  "schema_version": "edge-tribunal-holdout-registry-v1",
+  "title": "Edge Tribunal holdout registry (engine/experiments/holdout_registry.py)",
+  "type": "object",
+  "required": ["registry_version", "entries", "registry_sha256"],
+  "properties": {
+    "registry_version": {"type": "string", "enum": ["edge-tribunal-holdout-registry-v1"]},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "holdout_id", "dataset_fingerprint", "universe", "interval_start_utc",
+          "interval_end_utc", "target_contract_sha256", "model_family",
+          "hypothesis_family", "status", "experiment_id", "plan_sha256",
+          "claimed_at_utc"
+        ],
+        "properties": {
+          "holdout_id": {"type": "string"},
+          "dataset_fingerprint": {"type": "string"},
+          "universe": {"type": "array", "items": {"type": "string"}},
+          "interval_start_utc": {"type": "string"},
+          "interval_end_utc": {"type": "string"},
+          "target_contract_sha256": {"type": "string"},
+          "model_family": {"type": "string"},
+          "hypothesis_family": {"type": "string"},
+          "status": {"type": "string",
+                     "enum": ["UNUSED", "SEALED_FOR_EXPERIMENT", "CONSUMED",
+                              "FORENSIC_REUSE", "INVALIDATED"]},
+          "experiment_id": {"type": ["string", "null"]},
+          "plan_sha256": {"type": ["string", "null"]},
+          "claimed_at_utc": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "registry_sha256": {"type": "string"}
+  },
+  "additionalProperties": false
+}

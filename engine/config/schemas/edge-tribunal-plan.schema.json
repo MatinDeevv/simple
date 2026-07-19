@@ -1,0 +1,95 @@
+{
+  "schema_version": "edge-tribunal-plan-v1",
+  "title": "Edge Tribunal preregistration plan (engine/experiments/preregistration.py)",
+  "type": "object",
+  "required": [
+    "plan_version", "identity", "hypothesis", "code_contract", "data_contract",
+    "target_contract", "primary_comparator", "secondary_comparators",
+    "primary_metrics", "secondary_metrics", "uncertainty_contract",
+    "entry_policy_contract", "robustness_contract", "concentration_limits",
+    "multiple_testing_contract", "acceptance_gates",
+    "automatic_rejection_conditions", "promotion_ceiling"
+  ],
+  "properties": {
+    "plan_version": {"type": "string", "enum": ["edge-tribunal-plan-v1"]},
+    "identity": {
+      "type": "object",
+      "required": ["experiment_id", "title", "researcher", "created_at_utc",
+                   "parent_experiment_id", "amendment_reason"],
+      "properties": {
+        "experiment_id": {"type": "string"},
+        "title": {"type": "string"},
+        "researcher": {"type": "string"},
+        "created_at_utc": {"type": "string"},
+        "parent_experiment_id": {"type": ["string", "null"]},
+        "amendment_reason": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "hypothesis": {
+      "type": "object",
+      "required": ["statement", "economic_mechanism", "expected_direction",
+                   "expected_holding_horizon", "expected_failure_mode",
+                   "why_effect_exists", "why_effect_might_disappear"],
+      "properties": {
+        "statement": {"type": "string"},
+        "economic_mechanism": {"type": "string"},
+        "expected_direction": {"type": "string"},
+        "expected_holding_horizon": {"type": "string"},
+        "expected_failure_mode": {"type": "string"},
+        "why_effect_exists": {"type": "string"},
+        "why_effect_might_disappear": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "code_contract": {"type": "object"},
+    "data_contract": {"type": "object"},
+    "target_contract": {"type": "object"},
+    "primary_comparator": {"type": "object"},
+    "secondary_comparators": {"type": "array", "items": {"type": "object"}},
+    "primary_metrics": {"type": "array", "items": {"type": "string"}},
+    "secondary_metrics": {"type": "array", "items": {"type": "string"}},
+    "uncertainty_contract": {"type": "object"},
+    "entry_policy_contract": {"type": "object"},
+    "robustness_contract": {"type": "object"},
+    "concentration_limits": {"type": "object"},
+    "multiple_testing_contract": {"type": "object"},
+    "acceptance_gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gate_id", "category", "description", "metric_path",
+                     "comparison", "threshold", "required", "on_insufficient"],
+        "properties": {
+          "gate_id": {"type": "string"},
+          "category": {"type": "string",
+                       "enum": ["statistical", "negative_control", "robustness",
+                                "concentration", "power", "data_quality"]},
+          "description": {"type": "string"},
+          "metric_path": {"type": "string"},
+          "comparison": {"type": "string", "enum": [">=", ">", "<=", "<", "=="]},
+          "threshold": {"type": "number"},
+          "required": {"type": "boolean"},
+          "on_insufficient": {"type": "string", "enum": ["inconclusive", "invalid", "fail"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "automatic_rejection_conditions": {"type": "array", "items": {"type": "string"}},
+    "promotion_ceiling": {
+      "type": "object",
+      "required": ["maximum_verdict", "explanation", "execution_data_required",
+                   "forward_test_required"],
+      "properties": {
+        "maximum_verdict": {"type": "string",
+                            "enum": ["RESEARCH_ONLY", "FORWARD_TEST_ELIGIBLE",
+                                     "PAPER_FORWARD_TEST_PASSED"]},
+        "explanation": {"type": "string"},
+        "execution_data_required": {"type": "boolean"},
+        "forward_test_required": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

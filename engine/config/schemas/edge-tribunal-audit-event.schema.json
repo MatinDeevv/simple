@@ -1,0 +1,31 @@
+{
+  "schema_version": "edge-tribunal-audit-event-v1",
+  "title": "Edge Tribunal audit event (engine/experiments/audit_log.py)",
+  "type": "object",
+  "required": [
+    "event_id", "experiment_id", "event_type", "timestamp_utc", "actor",
+    "state_before", "state_after", "payload_sha256", "previous_event_sha256",
+    "event_sha256"
+  ],
+  "properties": {
+    "event_id": {"type": "string"},
+    "experiment_id": {"type": "string"},
+    "event_type": {"type": "string",
+                   "enum": ["PLAN_CREATED", "PLAN_AMENDED", "PLAN_SEALED",
+                            "DATASET_BOUND", "HOLDOUT_CLAIMED", "EVIDENCE_RECORDED",
+                            "GATES_EVALUATED", "VERDICT_ISSUED", "EXPERIMENT_ARCHIVED",
+                            "VERIFICATION_FAILED", "FORENSIC_REUSE_DECLARED"]},
+    "timestamp_utc": {"type": "string"},
+    "actor": {"type": "string"},
+    "state_before": {"type": "string",
+                     "enum": ["DRAFT", "SEALED", "DATA_BOUND", "EVIDENCE_RECORDED",
+                              "VERDICT_ISSUED", "ARCHIVED"]},
+    "state_after": {"type": "string",
+                    "enum": ["DRAFT", "SEALED", "DATA_BOUND", "EVIDENCE_RECORDED",
+                             "VERDICT_ISSUED", "ARCHIVED"]},
+    "payload_sha256": {"type": "string"},
+    "previous_event_sha256": {"type": "string"},
+    "event_sha256": {"type": "string"}
+  },
+  "additionalProperties": false
+}
