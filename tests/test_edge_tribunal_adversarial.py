@@ -94,8 +94,9 @@ def test_copied_experiment_remains_verifiable_without_location_binding(tmp_path:
     context = run_pipeline_to_bound(tmp_path / "source")
     copied = tmp_path / "copied"
     shutil.copytree(context["experiment_dir"], copied)
-    assert et.verify_experiment(context["experiment_dir"])["ok"] is True
-    assert et.verify_experiment(copied)["ok"] is True
+    assert et.verify_experiment(context["experiment_dir"],
+                                registry_root=context["registry_root"])["ok"] is True
+    assert et.verify_experiment(copied, registry_root=context["registry_root"])["ok"] is True
     assert et.show_state(context["experiment_dir"])["artifacts"] == et.show_state(copied)["artifacts"]
 
 

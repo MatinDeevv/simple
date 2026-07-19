@@ -23,6 +23,7 @@ from engine.experiments.canonical import (
 from engine.experiments.errors import (
     CanonicalJsonError,
     EvidenceValidationError,
+    GateEvaluationError,
     PathSecurityError,
 )
 from engine.experiments.preregistration import (
@@ -297,6 +298,9 @@ def _check_robustness(errors: list[str], evidence: dict[str, Any], plan: dict[st
     policies_seen: set[str] = set()
     boundaries_seen: set[str] = set()
     blocks_seen: set[int] = set()
+    times_seen: set[str] = set()
+    regimes_seen: set[str] = set()
+    perturbations_seen: set[str] = set()
     for index, cell in enumerate(cells):
         prefix = f"{where}.cells[{index}]"
         if not isinstance(cell, dict):
@@ -313,6 +317,14 @@ def _check_robustness(errors: list[str], evidence: dict[str, Any], plan: dict[st
         if not isinstance(dimensions, dict):
             errors.append(f"{prefix}.dimensions must be an object")
             dimensions = {}
+        if dimensions:
+            from engine.experiments.robustness import cell_id_for_dimensions
+            try:
+                expected_cell_id = cell_id_for_dimensions(dimensions)
+                if cell_id != expected_cell_id:
+                    errors.append(f"{prefix}.cell_id does not match its canonical dimensions")
+            except GateEvaluationError as exc:
+                errors.append(f"{prefix}.dimensions: {exc}")
         policy = dimensions.get("entry_policy")
         if policy in ENTRY_POLICY_ORDER:
             policies_seen.add(policy)
@@ -322,6 +334,11 @@ def _check_robustness(errors: list[str], evidence: dict[str, Any], plan: dict[st
         block = dimensions.get("block_length")
         if isinstance(block, int) and not isinstance(block, bool):
             blocks_seen.add(block)
+        for key, target in (("time_slice", times_seen), ("regime", regimes_seen),
+                            ("perturbation", perturbations_seen)):
+            value = dimensions.get(key)
+            if isinstance(value, str) and value:
+                target.add(value)
         status = cell.get("status")
         if status not in ROBUSTNESS_CELL_STATUSES:
             errors.append(f"{prefix}.status must be one of {sorted(ROBUSTNESS_CELL_STATUSES)}")
@@ -340,6 +357,25 @@ def _check_robustness(errors: list[str], evidence: dict[str, Any], plan: dict[st
     missing_blocks = [block for block in required_blocks if block not in blocks_seen]
     if missing_blocks:
         errors.append(f"{where}: mandatory block lengths absent from cells: {missing_blocks}")
+    # V2 plans declare the full cell registry.  Legacy v1 plans retain their
+    # historical loose coverage semantics but cannot claim v2 verification.
+    if plan["robustness_contract"].get("required_split_boundary_policies"):
+        for key, seen in (("required_time_slices", times_seen),
+                          ("required_regime_slices", regimes_seen),
+                          ("required_perturbations", perturbations_seen)):
+            missing = [value for value in plan["robustness_contract"][key] if value not in seen]
+            if missing:
+                errors.append(f"{where}: {key} absent from cells: {missing}")
+        from engine.experiments.robustness import planned_cell_registry
+        planned = set(planned_cell_registry(plan["robustness_contract"]))
+        if seen_ids != planned:
+            missing = sorted(planned - seen_ids)
+            unexpected = sorted(seen_ids - planned)
+            if missing:
+                errors.append(f"{where}: planned robustness cells missing: {missing[:10]}"
+                              f" (total {len(missing)})")
+            if unexpected:
+                errors.append(f"{where}: unregistered robustness cells: {unexpected[:10]}")
 
 
 def _check_concentration(errors: list[str], evidence: dict[str, Any]) -> None:

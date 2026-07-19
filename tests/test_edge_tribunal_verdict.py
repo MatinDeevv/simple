@@ -37,11 +37,11 @@ def run_to_verdict(tmp_path: Path, *, mutate=None, plan: dict | None = None,
                        registry_root=context["registry_root"], timestamp_utc=T_EVAL)
 
 
-def test_fully_passed_fresh_experiment_is_forward_test_eligible(tmp_path: Path) -> None:
+def test_self_attested_passing_experiment_is_research_only(tmp_path: Path) -> None:
     verdict = run_to_verdict(tmp_path)
-    assert verdict["verdict"] == "FORWARD_TEST_ELIGIBLE"
+    assert verdict["verdict"] == "RESEARCH_ONLY"
     assert verdict["validity_status"] == "VALID"
-    assert verdict["maximum_next_stage"] == "LEVEL_3_PREREGISTERED_PAPER_FORWARD_TEST"
+    assert verdict["maximum_next_stage"] == "LEVEL_1_HISTORICAL_BID_ONLY_RESEARCH"
     assert verdict["trading_authorization"] is False
     # It still explains why nothing higher was possible.
     assert any("execution" in reason for reason in verdict["why_not_higher"])
@@ -95,7 +95,7 @@ def test_underpowered_evidence_produces_inconclusive(tmp_path: Path) -> None:
 
 def test_reused_holdout_with_passing_statistics_is_research_only(tmp_path: Path) -> None:
     first = run_to_verdict(tmp_path, experiment_name="first")
-    assert first["verdict"] == "FORWARD_TEST_ELIGIBLE"
+    assert first["verdict"] == "RESEARCH_ONLY"
     second_plan = make_plan()
     second_plan["identity"]["experiment_id"] = "00000000-0000-4000-8000-000000000042"
     second_plan["identity"]["title"] = "renamed experiment cannot evade reuse"

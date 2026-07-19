@@ -32,6 +32,7 @@
     "execution_data": {"type": "object"},
     "multiplicity": {"type": "object"},
     "artifacts": {"type": "object"},
+    "independent_verification": {"type": "object"},
     "evidence_sha256": {"type": "string"}
   },
   "additionalProperties": false
